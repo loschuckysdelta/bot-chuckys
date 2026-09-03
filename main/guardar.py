@@ -14,6 +14,7 @@ ARCHIVO_RECIBIDOS = "guardados.json"
 ARCHIVO_INTERCAMBIOS = "intercambios.json"
 
 API_CONTACTOS = "https://bot-apis-zkmk.vercel.app/api/contactos"
+API_USERS = "https://bot-apis-zkmk.vercel.app/api/users"
 
 
 # =========================================================
@@ -88,7 +89,108 @@ def usuario_registrado_contactos(telegram_id):
     return None
 
 
-def teclado_registro():
+def _buscar_usuario_en_respuesta(datos, telegram_id):
+    """Devuelve True/False si la respuesta permite saberlo; None si es inconclusa."""
+    objetivo = str(telegram_id)
+
+    if not isinstance(datos, dict):
+        return None
+
+    for clave in ("usuario", "user"):
+        item = datos.get(clave)
+        if isinstance(item, dict):
+            return str(item.get("telegramId")) == objetivo
+
+    usuarios = datos.get("usuarios")
+    if isinstance(usuarios, list):
+        for usuario in usuarios:
+            if isinstance(usuario, dict) and str(usuario.get("telegramId")) == objetivo:
+                return True
+
+        total = datos.get("total")
+        if isinstance(total, int) and total <= len(usuarios):
+            return False
+
+    for clave in ("exists", "existe", "registrado"):
+        if clave in datos and isinstance(datos.get(clave), bool):
+            return datos.get(clave)
+
+    return None
+
+
+def usuario_registrado_users(telegram_id):
+    intentos = (
+        {"telegramId": telegram_id},
+        {"buscar": str(telegram_id)},
+    )
+
+    for params in intentos:
+        try:
+            respuesta = requests.get(API_USERS, params=params, timeout=10)
+            if respuesta.status_code != 200:
+                continue
+
+            resultado = _buscar_usuario_en_respuesta(respuesta.json(), telegram_id)
+            if resultado is not None:
+                return resultado
+        except Exception as error:
+            print("Error verificando /api/users:", error)
+
+    return None
+
+
+def asegurar_usuario_en_users(usuario):
+    """Registra/actualiza al usuario en /api/users. No bloquea si la API ya lo tiene."""
+    datos = {
+        "telegramId": usuario.id,
+        "username": usuario.username or "",
+        "nombre": (
+            " ".join(
+                parte for parte in [usuario.first_name or "", usuario.last_name or ""]
+                if parte
+            ).strip() or "SinNombre"
+        ),
+    }
+
+    try:
+        respuesta = requests.post(API_USERS, json=datos, timeout=10)
+        return respuesta.status_code in (200, 201)
+    except Exception as error:
+        print("Error registrando /api/users:", error)
+        return False
+
+
+def teclado_ir_privado(bot):
+    try:
+        username_bot = bot.get_me().username
+    except Exception:
+        username_bot = None
+
+    teclado = telebot.types.InlineKeyboardMarkup()
+
+    if username_bot:
+        teclado.add(
+            telebot.types.InlineKeyboardButton(
+                "📩 ABRIR PRIVADO",
+                url=f"https://t.me/{username_bot}"
+            )
+        )
+
+    return teclado
+
+
+def teclado_completar_registro():
+    teclado = telebot.types.InlineKeyboardMarkup()
+    teclado.add(
+        telebot.types.InlineKeyboardButton(
+            "📱 COMPLETAR REGISTRO",
+            callback_data="completar_registro_contacto"
+        )
+    )
+    return teclado
+
+
+def teclado_compartir_contacto():
     teclado = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True,
         one_time_keyboard=True
@@ -96,12 +198,13 @@ def teclado_registro():
 
     teclado.add(
         telebot.types.KeyboardButton(
-            "📱 REGISTRARME",
+            "📱 REGISTRAR MI NÚMERO",
             request_contact=True
         )
     )
 
     return teclado
+
 
 db_lock = threading.Lock()
 
@@ -491,73 +594,180 @@ def registrar_guardar(bot):
 
 
     # =====================================================
-    # REGISTRAR CONTACTO
+    # BOTÓN: COMPLETAR REGISTRO DESDE EL GRUPO
+    # =====================================================
+
+    @bot.callback_query_handler(
+        func=lambda call: call.data == "completar_registro_contacto"
+    )
+    def completar_registro_contacto(call):
+
+        usuario = call.from_user
+        usuario_id = usuario.id
+
+        # Primero comprobamos si ya terminó el registro.
+        en_contactos = usuario_registrado_contactos(usuario_id)
+
+        if en_contactos is True:
+            bot.answer_callback_query(
+                call.id,
+                "✅ Ya estás registrado. Puedes usar /guardar.",
+                show_alert=True
+            )
+            return
+
+        # Este botón está pensado para usuarios que ya existen en /api/users.
+        en_users = usuario_registrado_users(usuario_id)
+
+        if en_users is not True:
+            bot.answer_callback_query(
+                call.id,
+                "⚠️ Primero debes registrarte con /registro en privado.",
+                show_alert=True
+            )
+            return
+
+        try:
+            bot.send_message(
+                usuario_id,
+                "📱 <b>COMPLETAR REGISTRO</b>\n\n"
+                "✅ Tu cuenta ya está registrada en el bot.\n"
+                "❌ Solo falta registrar tu contacto.\n\n"
+                "👇 Pulsa <b>📱 REGISTRAR MI NÚMERO</b> "
+                "y comparte tu propio número de Telegram.",
+                reply_markup=teclado_compartir_contacto()
+            )
+
+            bot.answer_callback_query(
+                call.id,
+                "📩 Te envié la botonera a tu privado.",
+                show_alert=True
+            )
+
+        except telebot.apihelper.ApiTelegramException:
+            bot.answer_callback_query(
+                call.id,
+                "📩 Abre primero el privado del bot y vuelve a tocar el botón.",
+                show_alert=True
+            )
+
+            try:
+                bot.send_message(
+                    call.message.chat.id,
+                    "⚠️ <b>NO PUDE ESCRIBIRTE AL PRIVADO</b>\n\n"
+                    "Abre el chat privado del bot y luego vuelve a tocar "
+                    "<b>📱 COMPLETAR REGISTRO</b>.",
+                    reply_markup=teclado_ir_privado(bot)
+                )
+            except Exception:
+                pass
+
+
+    # =====================================================
+    # /REGISTRO - SOLO PRIVADO
+    # =====================================================
+
+    @bot.message_handler(commands=["registro"])
+    def iniciar_registro(message):
+
+        if message.chat.type != "private":
+            bot.reply_to(
+                message,
+                "📩 <b>EL REGISTRO SE HACE EN PRIVADO</b>\n\n"
+                "Abre el chat privado del bot y escribe "
+                "<code>/registro</code>.",
+                reply_markup=teclado_ir_privado(bot)
+            )
+            return
+
+        usuario = message.from_user
+        usuario_id = usuario.id
+
+        en_contactos = usuario_registrado_contactos(usuario_id)
+
+        if en_contactos is True:
+            bot.send_message(
+                message.chat.id,
+                "✅ <b>YA ESTÁS HABILITADO</b>\n\n"
+                "Tu número ya está registrado.\n\n"
+                "👥 Regresa al grupo y utiliza <code>/guardar</code>.",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+            return
+
+        en_users = usuario_registrado_users(usuario_id)
+        if en_users is not True:
+            asegurar_usuario_en_users(usuario)
+
+        bot.send_message(
+            message.chat.id,
+            "📱 <b>COMPLETAR REGISTRO</b>\n\n"
+            "Tu cuenta del bot ya está lista. Solo falta registrar "
+            "tu número para habilitar <code>/guardar</code>.\n\n"
+            "👇 Pulsa el botón y comparte <b>tu propio número</b>.",
+            reply_markup=teclado_compartir_contacto()
+        )
+
+
+    # =====================================================
+    # RECIBIR / REGISTRAR CONTACTO - SOLO PRIVADO
     # =====================================================
 
     @bot.message_handler(content_types=["contact"])
     def registrar_contacto(message):
 
+        if message.chat.type != "private":
+            return
+
         contacto = message.contact
         usuario = message.from_user
 
-        # Solo aceptar el número del propio usuario
         if contacto.user_id != usuario.id:
             bot.reply_to(
                 message,
                 "❌ <b>DEBES COMPARTIR TU PROPIO NÚMERO</b>\n\n"
-                "Pulsa <b>📱 REGISTRARME</b> y comparte tu contacto."
+                "Pulsa <b>📱 REGISTRAR MI NÚMERO</b> y comparte tu contacto."
             )
             return
 
+        asegurar_usuario_en_users(usuario)
+
         datos = {
             "telegramId": usuario.id,
-            "username": usuario.username or "SinUsername",
+            "username": usuario.username or "",
             "nombre": (
                 " ".join(
-                    parte for parte in [
-                        usuario.first_name or "",
-                        usuario.last_name or ""
-                    ]
+                    parte for parte in [usuario.first_name or "", usuario.last_name or ""]
                     if parte
-                ).strip()
-                or "SinNombre"
+                ).strip() or "SinNombre"
             ),
             "telefono": contacto.phone_number
         }
 
         try:
-            respuesta = requests.post(
-                API_CONTACTOS,
-                json=datos,
-                timeout=10
-            )
+            respuesta = requests.post(API_CONTACTOS, json=datos, timeout=10)
 
             if respuesta.status_code in (200, 201):
                 bot.send_message(
                     message.chat.id,
                     "✅ <b>REGISTRO COMPLETADO</b>\n\n"
-                    "Ya estás registrado y puedes utilizar "
-                    "<code>/guardar</code>.",
+                    "Tu cuenta y tu contacto quedaron habilitados.\n\n"
+                    "👥 Regresa al grupo y utiliza <code>/guardar</code>.",
                     reply_markup=telebot.types.ReplyKeyboardRemove()
                 )
                 return
 
-            print(
-                "Error registrando contacto:",
-                respuesta.status_code,
-                respuesta.text[:500]
-            )
-
+            print("Error registrando contacto:", respuesta.status_code, respuesta.text[:500])
             bot.send_message(
                 message.chat.id,
                 "❌ <b>NO SE PUDO COMPLETAR EL REGISTRO</b>\n\n"
-                "La API rechazó la solicitud. Inténtalo nuevamente.",
+                "La API rechazó la solicitud. Inténtalo nuevamente con "
+                "<code>/registro</code>.",
                 reply_markup=telebot.types.ReplyKeyboardRemove()
             )
 
         except Exception as error:
             print("Error registrando contacto:", error)
-
             bot.send_message(
                 message.chat.id,
                 "❌ <b>ERROR DE CONEXIÓN</b>\n\n"
@@ -579,24 +789,39 @@ def registrar_guardar(bot):
 
 
         # =================================================
-        # VERIFICAR REGISTRO EN /API/CONTACTOS
+        # VERIFICAR /API/USERS + /API/CONTACTOS
         # =================================================
 
-        registrado = usuario_registrado_contactos(usuario_id)
+        en_contactos = usuario_registrado_contactos(usuario_id)
 
-        if registrado is False:
-            bot.reply_to(
-                message,
-                "🔒 <b>DEBES REGISTRARTE PRIMERO</b>\n\n"
-                "Para utilizar <code>/guardar</code> debes estar "
-                "registrado en nuestra base de datos.\n\n"
-                "Pulsa <b>📱 REGISTRARME</b> y comparte tu propio "
-                "número de Telegram.",
-                reply_markup=teclado_registro()
-            )
+        if en_contactos is False:
+            en_users = usuario_registrado_users(usuario_id)
+
+            if en_users is True:
+                bot.reply_to(
+                    message,
+                    "🔐 <b>FALTA COMPLETAR TU REGISTRO</b>\n\n"
+                    "✅ Ya estás registrado en el bot.\n"
+                    "❌ Solo falta registrar tu contacto.\n\n"
+                    "👇 Pulsa <b>📱 COMPLETAR REGISTRO</b>.\n\n"
+                    "El bot te enviará automáticamente al privado la "
+                    "botonera para compartir tu número.",
+                    reply_markup=teclado_completar_registro()
+                )
+            else:
+                bot.reply_to(
+                    message,
+                    "🔒 <b>NO ESTÁS REGISTRADO</b>\n\n"
+                    "Para utilizar <code>/guardar</code> primero debes "
+                    "registrar tu cuenta.\n\n"
+                    "📩 Abre el privado del bot y escribe:\n\n"
+                    "<code>/registro</code>",
+                    reply_markup=teclado_ir_privado(bot)
+                )
+
             return
 
-        if registrado is None:
+        if en_contactos is None:
             bot.reply_to(
                 message,
                 "⚠️ <b>NO PUDE VERIFICAR TU REGISTRO</b>\n\n"
@@ -818,9 +1043,9 @@ def registrar_guardar(bot):
                     "🔒 <b>YA NO PUEDO CONTINUAR</b>\n\n"
                     "Tu Telegram no aparece registrado en la base "
                     "de contactos.\n\n"
-                    "Pulsa <b>📱 REGISTRARME</b> y vuelve a iniciar "
-                    "el intercambio.",
-                    reply_markup=teclado_registro()
+                    "Pulsa <b>IR AL PRIVADO</b>, escribe "
+                    "<code>/registro</code> y vuelve a iniciar el intercambio.",
+                    reply_markup=teclado_ir_privado(bot)
                 )
             else:
                 bot.reply_to(
