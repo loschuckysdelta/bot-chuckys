@@ -3,6 +3,7 @@ import json
 import os
 import threading
 import time
+import requests
 
 
 # =========================================================
@@ -11,6 +12,96 @@ import time
 
 ARCHIVO_RECIBIDOS = "guardados.json"
 ARCHIVO_INTERCAMBIOS = "intercambios.json"
+
+API_CONTACTOS = "https://bot-apis-zkmk.vercel.app/api/contactos"
+
+
+# =========================================================
+# CONTACTOS / REGISTRO
+# =========================================================
+
+def _buscar_contacto_en_respuesta(datos, telegram_id):
+    """Devuelve True/False si la respuesta permite saberlo; None si es inconclusa."""
+    objetivo = str(telegram_id)
+
+    if not isinstance(datos, dict):
+        return None
+
+    # Respuesta de un contacto individual
+    for clave in ("contacto", "usuario", "user"):
+        item = datos.get(clave)
+        if isinstance(item, dict):
+            return str(item.get("telegramId")) == objetivo
+
+    # Respuesta de listado
+    contactos = datos.get("contactos")
+    if isinstance(contactos, list):
+        for contacto in contactos:
+            if isinstance(contacto, dict) and str(contacto.get("telegramId")) == objetivo:
+                return True
+
+        # Si la API devolvió un resultado filtrado pequeño, la ausencia sí es concluyente.
+        total = datos.get("total")
+        if isinstance(total, int) and total <= len(contactos):
+            return False
+
+    # Algunos backends devuelven flags de existencia
+    for clave in ("exists", "existe", "registrado"):
+        if clave in datos and isinstance(datos.get(clave), bool):
+            return datos.get(clave)
+
+    return None
+
+
+def usuario_registrado_contactos(telegram_id):
+    """
+    Comprueba el registro usando búsquedas directas.
+    Retorna True si existe, False si no existe y None si la API no pudo verificarse.
+    """
+    intentos = (
+        {"telegramId": telegram_id},
+        {"buscar": str(telegram_id)},
+    )
+
+    for params in intentos:
+        try:
+            respuesta = requests.get(
+                API_CONTACTOS,
+                params=params,
+                timeout=10
+            )
+
+            if respuesta.status_code != 200:
+                continue
+
+            resultado = _buscar_contacto_en_respuesta(
+                respuesta.json(),
+                telegram_id
+            )
+
+            if resultado is not None:
+                return resultado
+
+        except Exception as error:
+            print("Error verificando contacto:", error)
+
+    return None
+
+
+def teclado_registro():
+    teclado = telebot.types.ReplyKeyboardMarkup(
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    teclado.add(
+        telebot.types.KeyboardButton(
+            "📱 REGISTRARME",
+            request_contact=True
+        )
+    )
+
+    return teclado
 
 db_lock = threading.Lock()
 
@@ -400,6 +491,82 @@ def registrar_guardar(bot):
 
 
     # =====================================================
+    # REGISTRAR CONTACTO
+    # =====================================================
+
+    @bot.message_handler(content_types=["contact"])
+    def registrar_contacto(message):
+
+        contacto = message.contact
+        usuario = message.from_user
+
+        # Solo aceptar el número del propio usuario
+        if contacto.user_id != usuario.id:
+            bot.reply_to(
+                message,
+                "❌ <b>DEBES COMPARTIR TU PROPIO NÚMERO</b>\n\n"
+                "Pulsa <b>📱 REGISTRARME</b> y comparte tu contacto."
+            )
+            return
+
+        datos = {
+            "telegramId": usuario.id,
+            "username": usuario.username or "SinUsername",
+            "nombre": (
+                " ".join(
+                    parte for parte in [
+                        usuario.first_name or "",
+                        usuario.last_name or ""
+                    ]
+                    if parte
+                ).strip()
+                or "SinNombre"
+            ),
+            "telefono": contacto.phone_number
+        }
+
+        try:
+            respuesta = requests.post(
+                API_CONTACTOS,
+                json=datos,
+                timeout=10
+            )
+
+            if respuesta.status_code in (200, 201):
+                bot.send_message(
+                    message.chat.id,
+                    "✅ <b>REGISTRO COMPLETADO</b>\n\n"
+                    "Ya estás registrado y puedes utilizar "
+                    "<code>/guardar</code>.",
+                    reply_markup=telebot.types.ReplyKeyboardRemove()
+                )
+                return
+
+            print(
+                "Error registrando contacto:",
+                respuesta.status_code,
+                respuesta.text[:500]
+            )
+
+            bot.send_message(
+                message.chat.id,
+                "❌ <b>NO SE PUDO COMPLETAR EL REGISTRO</b>\n\n"
+                "La API rechazó la solicitud. Inténtalo nuevamente.",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+
+        except Exception as error:
+            print("Error registrando contacto:", error)
+
+            bot.send_message(
+                message.chat.id,
+                "❌ <b>ERROR DE CONEXIÓN</b>\n\n"
+                "No se pudo conectar con la base de contactos.",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+
+
+    # =====================================================
     # /GUARDAR
     # =====================================================
 
@@ -409,6 +576,34 @@ def registrar_guardar(bot):
     def guardar(message):
 
         usuario_id = message.from_user.id
+
+
+        # =================================================
+        # VERIFICAR REGISTRO EN /API/CONTACTOS
+        # =================================================
+
+        registrado = usuario_registrado_contactos(usuario_id)
+
+        if registrado is False:
+            bot.reply_to(
+                message,
+                "🔒 <b>DEBES REGISTRARTE PRIMERO</b>\n\n"
+                "Para utilizar <code>/guardar</code> debes estar "
+                "registrado en nuestra base de datos.\n\n"
+                "Pulsa <b>📱 REGISTRARME</b> y comparte tu propio "
+                "número de Telegram.",
+                reply_markup=teclado_registro()
+            )
+            return
+
+        if registrado is None:
+            bot.reply_to(
+                message,
+                "⚠️ <b>NO PUDE VERIFICAR TU REGISTRO</b>\n\n"
+                "La base de contactos no respondió correctamente. "
+                "Inténtalo nuevamente en unos momentos."
+            )
+            return
 
 
         # =================================================
@@ -606,6 +801,36 @@ def registrar_guardar(bot):
         pendiente = contenidos_pendientes[
             usuario_id
         ]
+
+
+        # =================================================
+        # VOLVER A VERIFICAR REGISTRO ANTES DE ENTREGAR
+        # =================================================
+
+        registrado = usuario_registrado_contactos(usuario_id)
+
+        if registrado is not True:
+            contenidos_pendientes.pop(usuario_id, None)
+
+            if registrado is False:
+                bot.reply_to(
+                    message,
+                    "🔒 <b>YA NO PUEDO CONTINUAR</b>\n\n"
+                    "Tu Telegram no aparece registrado en la base "
+                    "de contactos.\n\n"
+                    "Pulsa <b>📱 REGISTRARME</b> y vuelve a iniciar "
+                    "el intercambio.",
+                    reply_markup=teclado_registro()
+                )
+            else:
+                bot.reply_to(
+                    message,
+                    "⚠️ <b>NO PUDE VERIFICAR TU REGISTRO</b>\n\n"
+                    "No se entregó ningún contenido. Vuelve a "
+                    "intentarlo cuando la API esté disponible."
+                )
+
+            return
 
 
         # =================================================

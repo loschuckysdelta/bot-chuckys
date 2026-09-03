@@ -2,103 +2,277 @@ import requests
 import telebot
 
 
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
+ID_GRUPO = -1004286061167
+API_URL = "https://bot-apis-zkmk.vercel.app/api/contactos"
+
+
+# ============================================================
+# GRUPO FREE
+# ============================================================
+
 def ejecutar_grupo_free(bot, call):
-  bot.answer_callback_query(call.id)
 
-  user_id = call.from_user.id
-  ID_GRUPO = -1004286061167
-  API_URL = "https://bot-apis-zkmk.vercel.app/api/contactos"
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception:
+        pass
 
-  # 1. VERIFICAR SI EL USUARIO YA ESTÁ EN EL GRUPO
-  try:
-    miembro = bot.get_chat_member(chat_id=ID_GRUPO, user_id=user_id)
-    # Estados de usuarios activos en el grupo
-    if miembro.status in ["member", "administrator", "creator"]:
-      bot.send_message(
-          user_id,
-          "⚠️ <b>Ya eres miembro de este grupo.</b>\n\n"
-          "No es necesario solicitar un nuevo enlace de acceso.",
-          parse_mode="HTML",
-      )
-      return  # Detiene la ejecución aquí
-  except Exception as e:
-    # Si ocurre un error (por ejemplo, si el bot no está en el grupo), se imprime en consola
-    print(f"Error al verificar estado de miembro: {e}")
+    user_id = call.from_user.id
 
-  # 2. SI NO ESTÁ EN EL GRUPO, CONTINÚA EL FLUJO DE SOLICITUD DE CONTACTO
-  markup = telebot.types.ReplyKeyboardMarkup(
-      one_time_keyboard=True,
-      resize_keyboard=True,
-      input_field_placeholder="Presiona el botón de abajo 👇",
-  )
-  boton_contacto = telebot.types.KeyboardButton(
-      text="📱 Compartir mi número telefónico", request_contact=True
-  )
-  markup.add(boton_contacto)
+    # ========================================================
+    # 1. VERIFICAR SI YA ESTÁ DENTRO DEL GRUPO
+    # ========================================================
 
-  def procesar_contacto(message):
-    if message.chat.type != "private":
-      return
+    try:
 
-    if message.contact:
-      if message.contact.user_id != message.from_user.id:
-        bot.send_message(
-            user_id,
-            "❌ Debes compartir **tu propio** número telefónico usando el botón.",
-            reply_markup=telebot.types.ReplyKeyboardRemove(),
+        miembro = bot.get_chat_member(
+            chat_id=ID_GRUPO,
+            user_id=user_id
         )
-        return
 
-      numero = message.contact.phone_number
-      nombre = message.from_user.first_name
-      usuario = message.from_user.username or ""
+        if miembro.status in [
+            "member",
+            "administrator",
+            "creator"
+        ]:
 
-      # Envío de datos a la API
-      try:
+            bot.send_message(
+                user_id,
+                "⚠️ <b>Ya eres miembro de este grupo.</b>\n\n"
+                "No es necesario solicitar un nuevo enlace de acceso.",
+                parse_mode="HTML"
+            )
+
+            return
+
+    except Exception as e:
+        print(f"⚠️ Error verificando miembro: {e}")
+
+    # ========================================================
+    # 2. BOTÓN PARA COMPARTIR CONTACTO
+    # ========================================================
+
+    markup = telebot.types.ReplyKeyboardMarkup(
+        one_time_keyboard=True,
+        resize_keyboard=True,
+        input_field_placeholder="Presiona el botón de abajo 👇"
+    )
+
+    boton_contacto = telebot.types.KeyboardButton(
+        text="📱 Compartir mi número telefónico",
+        request_contact=True
+    )
+
+    markup.add(boton_contacto)
+
+    # ========================================================
+    # 3. PROCESAR CONTACTO
+    # ========================================================
+
+    def procesar_contacto(message):
+
+        if message.chat.type != "private":
+            return
+
+        # ----------------------------------------------------
+        # VERIFICAR QUE ENVÍE CONTACTO
+        # ----------------------------------------------------
+
+        if not message.contact:
+
+            bot.send_message(
+                user_id,
+                "❌ Debes presionar el botón "
+                "<b>📱 Compartir mi número telefónico</b>.",
+                parse_mode="HTML",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # VERIFICAR QUE SEA SU PROPIO NÚMERO
+        # ----------------------------------------------------
+
+        if (
+            message.contact.user_id
+            and message.contact.user_id != message.from_user.id
+        ):
+
+            bot.send_message(
+                user_id,
+                "❌ Debes compartir <b>tu propio número telefónico</b> "
+                "utilizando el botón.",
+                parse_mode="HTML",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+
+            return
+
+        # ====================================================
+        # DATOS DEL USUARIO
+        # ====================================================
+
+        numero = message.contact.phone_number or ""
+        nombre = message.from_user.first_name or ""
+
+        apellido = message.from_user.last_name or ""
+
+        username = (
+            f"@{message.from_user.username}"
+            if message.from_user.username
+            else "Sin username"
+        )
+
+        nombre_completo = f"{nombre} {apellido}".strip()
+
+        # ====================================================
+        # FORMATO QUE ESPERA TU API
+        #
+        # Ejemplo:
+        # 51999999999 | Lenin | @usuario | 123456789
+        # ====================================================
+
+        linea = (
+            f"{numero} | "
+            f"{nombre_completo} | "
+            f"{username} | "
+            f"{user_id}"
+        )
+
         payload = {
-            "telefono": numero,
-            "nombre": nombre,
-            "username": usuario,
-            "chat_id": user_id,
+            "lineas": linea
         }
-        requests.post(API_URL, json=payload, timeout=5)
-      except Exception as e:
-        print(f"Error guardando en la API: {e}")
 
-      # Generación del link de un solo uso
-      try:
-        link_temporal = bot.create_chat_invite_link(
-            chat_id=ID_GRUPO, member_limit=1
-        )
+        print("📤 Enviando a API:")
+        print(payload)
 
-        bot.send_message(
-            user_id,
-            f"✅ <b>Número verificado correctamente.</b>\n\n"
-            f"Accede mediante tu enlace único:\n{link_temporal.invite_link}\n\n"
-            f"⚠️ <i>Este enlace dejará de funcionar automáticamente en cuanto te unas.</i>",
-            parse_mode="HTML",
-            reply_markup=telebot.types.ReplyKeyboardRemove(),
-        )
-      except Exception as e:
-        bot.send_message(
-            user_id,
-            "❌ Error: El bot debe ser **Administrador** en el grupo con permisos para crear enlaces.",
-            reply_markup=telebot.types.ReplyKeyboardRemove(),
-        )
-    else:
-      bot.send_message(
-          user_id,
-          "❌ Operación cancelada. Debes presionar el botón para compartir tu contacto.",
-          reply_markup=telebot.types.ReplyKeyboardRemove(),
-      )
+        # ====================================================
+        # 4. GUARDAR EN API
+        # ====================================================
 
-  # Solicitud inicial enviada al privado
-  msg = bot.send_message(
-      user_id,
-      "👥 <b>UNIRSE AL GRUPO FREE</b>\n\n"
-      "Para obtener tu enlace de acceso, confirma tu identidad compartiendo tu número telefónico mediante el botón desplegado abajo:",
-      parse_mode="HTML",
-      reply_markup=markup,
-  )
+        try:
 
-  bot.register_next_step_handler(msg, procesar_contacto)
+            respuesta = requests.post(
+                API_URL,
+                json=payload,
+                timeout=10
+            )
+
+            print(
+                f"📡 API contactos → "
+                f"{respuesta.status_code}: {respuesta.text}"
+            )
+
+            # Si la API da error, detener
+            if not respuesta.ok:
+
+                bot.send_message(
+                    user_id,
+                    "❌ <b>No se pudo registrar tu contacto.</b>\n\n"
+                    "Inténtalo nuevamente.",
+                    parse_mode="HTML",
+                    reply_markup=telebot.types.ReplyKeyboardRemove()
+                )
+
+                return
+
+        except requests.exceptions.Timeout:
+
+            print("❌ Timeout conectando con API contactos")
+
+            bot.send_message(
+                user_id,
+                "❌ El servidor tardó demasiado en responder.\n"
+                "Inténtalo nuevamente.",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+
+            return
+
+        except requests.exceptions.RequestException as e:
+
+            print(f"❌ Error API contactos: {e}")
+
+            bot.send_message(
+                user_id,
+                "❌ No se pudo conectar con el servidor.",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+
+            return
+
+        # ====================================================
+        # 5. CREAR ENLACE ÚNICO
+        # ====================================================
+
+        try:
+
+            link_temporal = bot.create_chat_invite_link(
+                chat_id=ID_GRUPO,
+                member_limit=1,
+                name=f"FREE-{user_id}"
+            )
+
+            bot.send_message(
+                user_id,
+
+                "✅ <b>NÚMERO VERIFICADO CORRECTAMENTE</b>\n\n"
+
+                f"👤 <b>Usuario:</b> {nombre_completo}\n"
+                f"📱 <b>Teléfono:</b> {numero}\n\n"
+
+                "👥 <b>Acceso al Grupo Free</b>\n\n"
+
+                f"🔗 {link_temporal.invite_link}\n\n"
+
+                "⚠️ <i>Este enlace es personal y solamente puede "
+                "utilizarse una vez.</i>",
+
+                parse_mode="HTML",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+
+        except Exception as e:
+
+            print(f"❌ Error creando enlace: {e}")
+
+            bot.send_message(
+                user_id,
+
+                "❌ <b>No se pudo generar el enlace.</b>\n\n"
+                "El bot debe ser administrador del grupo y tener "
+                "permiso para invitar usuarios.",
+
+                parse_mode="HTML",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+
+    # ========================================================
+    # SOLICITAR CONTACTO
+    # ========================================================
+
+    msg = bot.send_message(
+
+        user_id,
+
+        "👥 <b>UNIRSE AL GRUPO FREE</b>\n\n"
+
+        "Para obtener tu enlace de acceso debes verificar "
+        "tu número telefónico.\n\n"
+
+        "👇 Presiona el botón de abajo para compartir "
+        "<b>tu propio número</b>.",
+
+        parse_mode="HTML",
+        reply_markup=markup
+    )
+
+    bot.register_next_step_handler(
+        msg,
+        procesar_contacto
+    )
