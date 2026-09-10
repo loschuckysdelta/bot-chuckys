@@ -128,7 +128,8 @@ def botonera_principal():
 
     teclado = InlineKeyboardMarkup(row_width=2)
 
-    teclado.add(
+    # FILA 1
+    teclado.row(
         InlineKeyboardButton(
             "👥 GRUPO FREE",
             callback_data="grupo_free"
@@ -136,7 +137,11 @@ def botonera_principal():
         InlineKeyboardButton(
             "👑 GRUPO VIP",
             callback_data="grupo_vip"
-        ),
+        )
+    )
+
+    # FILA 2
+    teclado.row(
         InlineKeyboardButton(
             "💚 YAPE FREE",
             callback_data="yape_free"
@@ -147,8 +152,19 @@ def botonera_principal():
         )
     )
 
-    return teclado
+    # FILA 3
+    teclado.row(
+        InlineKeyboardButton(
+            "📋 MENÚ FREE",
+            callback_data="menu_free"
+        ),
+        InlineKeyboardButton(
+            "🤖 BOT YAPE FREE",
+            callback_data="bot_yape_free"
+        )
+    )
 
+    return teclado
 
 # ============================================================
 # REGISTRAR / ACTUALIZAR USUARIO

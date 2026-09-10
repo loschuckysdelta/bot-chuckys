@@ -75,12 +75,13 @@ def ejecutar_grupo_free(bot, call):
 
     def procesar_contacto(message):
 
+        # Solo aceptar desde privado
         if message.chat.type != "private":
             return
 
-        # ----------------------------------------------------
-        # VERIFICAR QUE ENVÍE CONTACTO
-        # ----------------------------------------------------
+        # ====================================================
+        # VERIFICAR QUE REALMENTE ENVÍE UN CONTACTO
+        # ====================================================
 
         if not message.contact:
 
@@ -94,9 +95,9 @@ def ejecutar_grupo_free(bot, call):
 
             return
 
-        # ----------------------------------------------------
+        # ====================================================
         # VERIFICAR QUE SEA SU PROPIO NÚMERO
-        # ----------------------------------------------------
+        # ====================================================
 
         if (
             message.contact.user_id
@@ -114,45 +115,53 @@ def ejecutar_grupo_free(bot, call):
             return
 
         # ====================================================
-        # DATOS DEL USUARIO
+        # 4. OBTENER DATOS DEL USUARIO
         # ====================================================
 
-        numero = message.contact.phone_number or ""
-        nombre = message.from_user.first_name or ""
-
-        apellido = message.from_user.last_name or ""
+        telegram_id = message.from_user.id
 
         username = (
-            f"@{message.from_user.username}"
+            message.from_user.username
             if message.from_user.username
-            else "Sin username"
+            else ""
         )
+
+        nombre = message.from_user.first_name or ""
+        apellido = message.from_user.last_name or ""
 
         nombre_completo = f"{nombre} {apellido}".strip()
 
-        # ====================================================
-        # FORMATO QUE ESPERA TU API
-        #
-        # Ejemplo:
-        # 51999999999 | Lenin | @usuario | 123456789
-        # ====================================================
+        telefono = message.contact.phone_number or ""
 
-        linea = (
-            f"{numero} | "
-            f"{nombre_completo} | "
-            f"{username} | "
-            f"{user_id}"
-        )
+        # Quitar espacios
+        telefono = telefono.replace(" ", "")
+
+        # Quitar "+" para guardar ejemplo: 51971386003
+        if telefono.startswith("+"):
+            telefono = telefono[1:]
+
+        # ====================================================
+        # 5. FORMATO EXACTO DE TU API
+        # ====================================================
 
         payload = {
-            "lineas": linea
+            "telegramId": telegram_id,
+            "username": username,
+            "nombre": nombre_completo,
+            "telefono": telefono
         }
 
-        print("📤 Enviando a API:")
-        print(payload)
+        print("========================================")
+        print("📤 ENVIANDO CONTACTO A LA API")
+        print(f"Telegram ID: {telegram_id}")
+        print(f"Username: {username}")
+        print(f"Nombre: {nombre_completo}")
+        print(f"Teléfono: {telefono}")
+        print("Payload:", payload)
+        print("========================================")
 
         # ====================================================
-        # 4. GUARDAR EN API
+        # 6. GUARDAR CONTACTO EN LA API
         # ====================================================
 
         try:
@@ -168,12 +177,16 @@ def ejecutar_grupo_free(bot, call):
                 f"{respuesta.status_code}: {respuesta.text}"
             )
 
-            # Si la API da error, detener
+            # ------------------------------------------------
+            # ERROR DE LA API
+            # ------------------------------------------------
+
             if not respuesta.ok:
 
                 bot.send_message(
                     user_id,
                     "❌ <b>No se pudo registrar tu contacto.</b>\n\n"
+                    f"Servidor respondió: <code>{respuesta.status_code}</code>\n\n"
                     "Inténtalo nuevamente.",
                     parse_mode="HTML",
                     reply_markup=telebot.types.ReplyKeyboardRemove()
@@ -181,18 +194,27 @@ def ejecutar_grupo_free(bot, call):
 
                 return
 
+        # ====================================================
+        # TIMEOUT
+        # ====================================================
+
         except requests.exceptions.Timeout:
 
             print("❌ Timeout conectando con API contactos")
 
             bot.send_message(
                 user_id,
-                "❌ El servidor tardó demasiado en responder.\n"
+                "❌ <b>El servidor tardó demasiado en responder.</b>\n\n"
                 "Inténtalo nuevamente.",
+                parse_mode="HTML",
                 reply_markup=telebot.types.ReplyKeyboardRemove()
             )
 
             return
+
+        # ====================================================
+        # ERROR DE CONEXIÓN
+        # ====================================================
 
         except requests.exceptions.RequestException as e:
 
@@ -200,14 +222,16 @@ def ejecutar_grupo_free(bot, call):
 
             bot.send_message(
                 user_id,
-                "❌ No se pudo conectar con el servidor.",
+                "❌ <b>No se pudo conectar con el servidor.</b>\n\n"
+                "Inténtalo nuevamente.",
+                parse_mode="HTML",
                 reply_markup=telebot.types.ReplyKeyboardRemove()
             )
 
             return
 
         # ====================================================
-        # 5. CREAR ENLACE ÚNICO
+        # 7. CREAR ENLACE ÚNICO DEL GRUPO
         # ====================================================
 
         try:
@@ -215,8 +239,12 @@ def ejecutar_grupo_free(bot, call):
             link_temporal = bot.create_chat_invite_link(
                 chat_id=ID_GRUPO,
                 member_limit=1,
-                name=f"FREE-{user_id}"
+                name=f"FREE-{telegram_id}"
             )
+
+            # =================================================
+            # 8. ENVIAR ENLACE AL USUARIO
+            # =================================================
 
             bot.send_message(
                 user_id,
@@ -224,7 +252,7 @@ def ejecutar_grupo_free(bot, call):
                 "✅ <b>NÚMERO VERIFICADO CORRECTAMENTE</b>\n\n"
 
                 f"👤 <b>Usuario:</b> {nombre_completo}\n"
-                f"📱 <b>Teléfono:</b> {numero}\n\n"
+                f"📱 <b>Teléfono:</b> {telefono}\n\n"
 
                 "👥 <b>Acceso al Grupo Free</b>\n\n"
 
@@ -235,6 +263,11 @@ def ejecutar_grupo_free(bot, call):
 
                 parse_mode="HTML",
                 reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+
+            print(
+                f"✅ Enlace creado para {telegram_id}: "
+                f"{link_temporal.invite_link}"
             )
 
         except Exception as e:
@@ -253,26 +286,39 @@ def ejecutar_grupo_free(bot, call):
             )
 
     # ========================================================
-    # SOLICITAR CONTACTO
+    # 9. SOLICITAR CONTACTO
     # ========================================================
 
-    msg = bot.send_message(
+    try:
 
-        user_id,
+        msg = bot.send_message(
 
-        "👥 <b>UNIRSE AL GRUPO FREE</b>\n\n"
+            user_id,
 
-        "Para obtener tu enlace de acceso debes verificar "
-        "tu número telefónico.\n\n"
+            "👥 <b>UNIRSE AL GRUPO FREE</b>\n\n"
 
-        "👇 Presiona el botón de abajo para compartir "
-        "<b>tu propio número</b>.",
+            "Para obtener tu enlace de acceso debes verificar "
+            "tu número telefónico.\n\n"
 
-        parse_mode="HTML",
-        reply_markup=markup
-    )
+            "👇 Presiona el botón de abajo para compartir "
+            "<b>tu propio número</b>.",
 
-    bot.register_next_step_handler(
-        msg,
-        procesar_contacto
-    )
+            parse_mode="HTML",
+            reply_markup=markup
+        )
+
+        # ====================================================
+        # ESPERAR EL CONTACTO
+        # ====================================================
+
+        bot.register_next_step_handler(
+            msg,
+            procesar_contacto
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ No se pudo enviar solicitud de contacto "
+            f"a {user_id}: {e}"
+        )
