@@ -41,6 +41,10 @@ USOS_USUARIOS_DIARIOS = {}
 # Confirmaciones temporales para /resetdb
 RESET_DB_CONFIRMACIONES = {}
 
+# Caché de vouchers de ejemplo generados por la API.
+# Evita volver a consumir la API cada vez que se usan las flechas.
+EJEMPLOS_CACHE = {}
+
 def cargar_grupos():
     if not os.path.exists(ARCHIVO_GRUPOS):
         return {}
@@ -238,10 +242,8 @@ def evaluar_permiso(chat_id, user_id):
     if chat_id < 0:
 
         if chat_id not in GRUPOS_AUTORIZADOS:
-            return False, (
-                "❌ <b>Grupo no autorizado</b>\n\n"
-                "Este grupo no está autorizado para usar el bot."
-            )
+            # Grupo no autorizado: ignorar silenciosamente.
+            return False, None
 
         datos_grupo = GRUPOS_AUTORIZADOS[chat_id]
 
@@ -507,6 +509,283 @@ def solicitar_voucher_api(endpoint, payload):
 # ========================================================
 
 def registrar_vaucher(bot):
+
+
+    # ====================================================
+    # /ejemplos - carrusel automático
+    #
+    # Genera las imágenes DIRECTAMENTE con la API para
+    # todos los servicios definidos en NOMBRES_SERVICIOS.
+    # No necesitas subir ni configurar imágenes manuales.
+    #
+    # La primera vez que se abre un servicio consume la API.
+    # Después se reutiliza desde EJEMPLOS_CACHE.
+    # ====================================================
+
+    def _lista_ejemplos():
+        """Devuelve todos los servicios usando la configuración principal."""
+        return list(NOMBRES_SERVICIOS.items())
+
+    def _texto_ejemplo(indice):
+        servicios = _lista_ejemplos()
+        comando, nombre = servicios[indice]
+        total = len(servicios)
+
+        return (
+            f"🚀 <b>Voucher {nombre} ({indice + 1}/{total})</b>\n\n"
+            f"🕹️ <b>Comando:</b>\n"
+            f"<code>/{comando} monto|titular|3 dígitos o 9 dígitos|mensaje|destino</code>\n\n"
+            f"✅ <b>Ejemplo de uso:</b>\n\n"
+            f"<pre>"
+            f"/{comando} 150|Pedro Castillo\n"
+            f"/{comando} 150|Pedro Castillo|999\n"
+            f"/{comando} 150|Pedro Castillo|999999999\n"
+            f"/{comando} 150|Pedro Castillo|999|Pago realizado\n"
+            f"/{comando} 150|Pedro Castillo|999|Pago realizado|Plin"
+            f"</pre>"
+        )
+
+    def _botones_ejemplo(indice):
+        servicios = _lista_ejemplos()
+        total = len(servicios)
+
+        anterior = (indice - 1) % total
+        siguiente = (indice + 1) % total
+
+        markup = types.InlineKeyboardMarkup(row_width=3)
+        markup.row(
+            types.InlineKeyboardButton(
+                "⬅️",
+                callback_data=f"ejemplo_{anterior}"
+            ),
+            types.InlineKeyboardButton(
+                f"{indice + 1}/{total}",
+                callback_data="ejemplo_nada"
+            ),
+            types.InlineKeyboardButton(
+                "➡️",
+                callback_data=f"ejemplo_{siguiente}"
+            )
+        )
+        markup.row(
+            types.InlineKeyboardButton(
+                "❌ Cerrar",
+                callback_data="ejemplo_cerrar"
+            )
+        )
+
+        return markup
+
+    def _generar_imagen_ejemplo(comando, user_id):
+        """
+        Genera un voucher real de ejemplo mediante la API.
+        Si ya fue generado antes, devuelve el contenido en caché.
+        """
+
+        if comando in EJEMPLOS_CACHE:
+            return EJEMPLOS_CACHE[comando], None
+
+        payload = {
+            "id": str(user_id),
+            "monto": "150",
+            "nombre": "Pedro Castillo",
+            "digitos": "999",
+            "mensaje": "Pago realizado",
+            "destino": "Plin"
+        }
+
+        imagen, error = solicitar_voucher_api(
+            f"/{comando}",
+            payload
+        )
+
+        if imagen:
+            EJEMPLOS_CACHE[comando] = imagen
+
+        return imagen, error
+
+    def _archivo_imagen_ejemplo(imagen_bytes, comando):
+        archivo = io.BytesIO(imagen_bytes)
+        archivo.name = f"{comando}_ejemplo.png"
+        archivo.seek(0)
+        return archivo
+
+    @bot.message_handler(commands=["ejemplos"])
+    def mostrar_ejemplos(message):
+        servicios = _lista_ejemplos()
+
+        if not servicios:
+            bot.reply_to(
+                message,
+                "⚠️ No hay servicios configurados.",
+                parse_mode="HTML"
+            )
+            return
+
+        indice = 0
+        comando, nombre = servicios[indice]
+
+        msg_espera = bot.reply_to(
+            message,
+            f"⏳ <i>Generando ejemplo de <b>{nombre}</b>...</i>",
+            parse_mode="HTML"
+        )
+
+        imagen, error = _generar_imagen_ejemplo(
+            comando,
+            message.from_user.id
+        )
+
+        try:
+            bot.delete_message(
+                message.chat.id,
+                msg_espera.message_id
+            )
+        except Exception:
+            pass
+
+        if not imagen:
+            bot.reply_to(
+                message,
+                f"❌ <b>No se pudo generar el ejemplo de {nombre}.</b>\n\n"
+                f"<code>{error}</code>",
+                parse_mode="HTML"
+            )
+            return
+
+        foto = _archivo_imagen_ejemplo(
+            imagen,
+            comando
+        )
+
+        bot.send_photo(
+            chat_id=message.chat.id,
+            photo=foto,
+            caption=_texto_ejemplo(indice),
+            reply_markup=_botones_ejemplo(indice),
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
+        )
+
+    @bot.callback_query_handler(
+        func=lambda call: call.data and call.data.startswith("ejemplo_")
+    )
+    def navegar_ejemplos(call):
+
+        # Contador central: no hace nada.
+        if call.data == "ejemplo_nada":
+            try:
+                bot.answer_callback_query(call.id)
+            except Exception:
+                pass
+            return
+
+        # Cerrar carrusel.
+        if call.data == "ejemplo_cerrar":
+            try:
+                bot.answer_callback_query(call.id)
+            except Exception:
+                pass
+
+            try:
+                bot.delete_message(
+                    call.message.chat.id,
+                    call.message.message_id
+                )
+            except Exception:
+                pass
+            return
+
+        try:
+            indice = int(call.data.split("_", 1)[1])
+        except Exception:
+            try:
+                bot.answer_callback_query(
+                    call.id,
+                    "Ejemplo inválido.",
+                    show_alert=True
+                )
+            except Exception:
+                pass
+            return
+
+        servicios = _lista_ejemplos()
+
+        if indice < 0 or indice >= len(servicios):
+            try:
+                bot.answer_callback_query(
+                    call.id,
+                    "Ejemplo inválido.",
+                    show_alert=True
+                )
+            except Exception:
+                pass
+            return
+
+        comando, nombre = servicios[indice]
+
+        try:
+            bot.answer_callback_query(
+                call.id,
+                f"Generando {nombre}..."
+            )
+        except Exception:
+            pass
+
+        imagen, error = _generar_imagen_ejemplo(
+            comando,
+            call.from_user.id
+        )
+
+        if not imagen:
+            bot.send_message(
+                call.message.chat.id,
+                f"❌ <b>No se pudo generar el ejemplo de {nombre}.</b>\n\n"
+                f"<code>{error}</code>",
+                parse_mode="HTML"
+            )
+            return
+
+        foto = _archivo_imagen_ejemplo(
+            imagen,
+            comando
+        )
+
+        media = types.InputMediaPhoto(
+            media=foto,
+            caption=_texto_ejemplo(indice),
+            parse_mode="HTML"
+        )
+
+        try:
+            bot.edit_message_media(
+                media=media,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=_botones_ejemplo(indice)
+            )
+        except Exception as e:
+            # Si Telegram no permite editar por algún motivo,
+            # eliminamos el anterior y enviamos uno nuevo.
+            print(f"⚠️ No se pudo editar el ejemplo: {e}")
+
+            try:
+                bot.delete_message(
+                    call.message.chat.id,
+                    call.message.message_id
+                )
+            except Exception:
+                pass
+
+            foto.seek(0)
+
+            bot.send_photo(
+                chat_id=call.message.chat.id,
+                photo=foto,
+                caption=_texto_ejemplo(indice),
+                reply_markup=_botones_ejemplo(indice),
+                parse_mode="HTML"
+            )
 
     # ====================================================
     # /resetdb
@@ -945,11 +1224,14 @@ def registrar_vaucher(bot):
 
         if not permitido:
 
-            bot.reply_to(
-                message,
-                info_plan,
-                parse_mode="HTML"
-            )
+            # Si el grupo no está autorizado, info_plan será None
+            # y el bot no mostrará ningún mensaje.
+            if info_plan:
+                bot.reply_to(
+                    message,
+                    info_plan,
+                    parse_mode="HTML"
+                )
 
             return
 

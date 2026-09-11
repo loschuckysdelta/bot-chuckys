@@ -840,10 +840,9 @@ def registrar_guardar(bot):
             bot.reply_to(
                 message,
 
-                "⚠️ <b>DEBES RESPONDER "
-                "A UNA FOTO O VIDEO</b>\n\n"
+                "⚠️ <b>DEBES RESPONDER A UN VIDEO</b>\n\n"
 
-                "1️⃣ Busca el contenido.\n"
+                "1️⃣ Busca el video.\n"
                 "2️⃣ Pulsa responder.\n"
                 "3️⃣ Escribe:\n\n"
 
@@ -857,74 +856,7 @@ def registrar_guardar(bot):
 
 
         # =================================================
-        # FOTO
-        # =================================================
-
-        if contenido.photo:
-
-            foto = contenido.photo[-1]
-
-            file_id = foto.file_id
-            file_unique_id = foto.file_unique_id
-
-
-            if ya_recibio_archivo(
-                usuario_id,
-                file_unique_id
-            ):
-
-                bot.reply_to(
-                    message,
-
-                    "⚠️ <b>YA GUARDASTE ESTA FOTO</b>\n\n"
-
-                    "Esta foto ya fue recibida "
-                    "anteriormente."
-                )
-
-                return
-
-
-            contenidos_pendientes[
-                usuario_id
-            ] = {
-
-                "tipo": "photo",
-
-                "file_id": file_id,
-
-                "file_unique_id": file_unique_id,
-
-                "chat_id": contenido.chat.id,
-
-                "message_id": contenido.message_id
-            }
-
-
-            bot.reply_to(
-                message,
-
-                "📥 <b>AMIGO, ENVÍA UN CONTENIDO</b>\n\n"
-
-                "Para recibir esta foto debes "
-                "enviar ahora:\n\n"
-
-                "🖼 Una foto\n"
-                "o\n"
-                "🎥 Un video\n\n"
-
-                "⚠️ Debe ser contenido diferente "
-                "y que no hayas utilizado antes.\n\n"
-
-                "❌ Para cancelar usa "
-                "<code>/cancelar</code>"
-            )
-
-            return
-
-
-        # =================================================
-        # VIDEO
+        # SOLO VIDEO
         # =================================================
 
         if contenido.video:
@@ -971,17 +903,15 @@ def registrar_guardar(bot):
             bot.reply_to(
                 message,
 
-                "📥 <b>AMIGO, ENVÍA UN CONTENIDO</b>\n\n"
+                "📥 <b>ENVÍA UN VIDEO</b>\n\n"
 
-                "Para recibir este video debes "
-                "enviar ahora:\n\n"
+                "Para recibir este video debes enviar "
+                "otro video diferente.\n\n"
 
-                "🖼 Una foto\n"
-                "o\n"
-                "🎥 Un video\n\n"
+                "🎥 <b>SOLO SE ACEPTAN VIDEOS</b>\n\n"
 
-                "⚠️ Debe ser contenido diferente "
-                "y que no hayas utilizado antes.\n\n"
+                "⚠️ El video debe ser diferente y no "
+                "haber sido utilizado anteriormente.\n\n"
 
                 "❌ Para cancelar usa "
                 "<code>/cancelar</code>"
@@ -999,11 +929,10 @@ def registrar_guardar(bot):
 
             "❌ <b>CONTENIDO NO PERMITIDO</b>\n\n"
 
-            "Solo puedes utilizar "
-            "<code>/guardar</code> respondiendo a:\n\n"
+            "<code>/guardar</code> solo funciona "
+            "respondiendo a un video.\n\n"
 
-            "🖼 Fotos\n"
-            "🎥 Videos"
+            "🎥 <b>SOLO VIDEOS</b>"
         )
 
 
@@ -1225,7 +1154,7 @@ def registrar_guardar(bot):
 
 
     # =====================================================
-    # FOTO COMO INTERCAMBIO
+    # FOTO NO PERMITIDA COMO INTERCAMBIO
     # =====================================================
 
     @bot.message_handler(
@@ -1235,24 +1164,15 @@ def registrar_guardar(bot):
 
         usuario_id = message.from_user.id
 
-
-        if (
-            usuario_id
-            not in contenidos_pendientes
-        ):
+        if usuario_id not in contenidos_pendientes:
             return
 
-
-        foto = message.photo[-1]
-
-        file_unique_id = (
-            foto.file_unique_id
-        )
-
-
-        procesar_intercambio(
+        bot.reply_to(
             message,
-            file_unique_id
+            "❌ <b>LAS FOTOS NO ESTÁN PERMITIDAS</b>\n\n"
+            "Para completar el intercambio debes enviar "
+            "un <b>video diferente</b>.\n\n"
+            "🎥 <b>SOLO VIDEOS</b>"
         )
 
 
@@ -1322,8 +1242,7 @@ def registrar_guardar(bot):
             "Para completar el intercambio "
             "solo puedes enviar:\n\n"
 
-            "🖼 Foto\n"
-            "🎥 Video\n\n"
+            "🎥 <b>Video</b>\n\n"
 
             "📥 Tu contenido pendiente "
             "sigue reservado."
