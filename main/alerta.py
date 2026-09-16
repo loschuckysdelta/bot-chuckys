@@ -49,6 +49,7 @@ difusiones = {}
 def nueva_alerta():
     return {
         "texto": None,
+        "foto": None,
         "video": None,
         "botones": [],
         "fijar": False,
@@ -245,10 +246,11 @@ def crear_markup_botones(botones):
 
 # ============================================================
 # ENVIAR CONTENIDO
-# SOLO VIDEO + TEXTO + BOTONES
+# FOTO O VIDEO + TEXTO + BOTONES
 # ============================================================
 def enviar_contenido(bot, chat_id, datos, usuario=None):
     texto = datos.get("texto")
+    foto = datos.get("foto")
     video = datos.get("video")
     botones = datos.get("botones", [])
 
@@ -256,6 +258,15 @@ def enviar_contenido(bot, chat_id, datos, usuario=None):
         texto = preparar_texto(texto, usuario)
 
     markup = crear_markup_botones(botones)
+
+    if foto:
+        return bot.send_photo(
+            chat_id,
+            foto,
+            caption=texto or None,
+            parse_mode="HTML",
+            reply_markup=markup,
+        )
 
     if video:
         return bot.send_video(
@@ -430,12 +441,24 @@ def registrar_alerta(bot):
     def mostrar_panel(chat_id, user_id, message_id=None):
         datos = alertas.get(user_id, nueva_alerta())
 
+        foto_estado = "✅ Ver" if datos.get("foto") else "👀 Ver"
         video_estado = "✅ Ver" if datos.get("video") else "👀 Ver"
         texto_estado = "✅ Ver" if datos.get("texto") else "👀 Ver"
         botones_estado = "✅ Ver" if datos.get("botones") else "👀 Ver"
         fijar_estado = "✅ SÍ" if datos.get("fijar") else "❌ NO"
 
         markup = types.InlineKeyboardMarkup()
+
+        markup.row(
+            types.InlineKeyboardButton(
+                "🖼 Imagen",
+                callback_data="alerta_foto",
+            ),
+            types.InlineKeyboardButton(
+                foto_estado,
+                callback_data="alerta_ver_foto",
+            ),
+        )
 
         markup.row(
             types.InlineKeyboardButton(
@@ -501,8 +524,8 @@ def registrar_alerta(bot):
 
         texto_panel = (
             "📢 <b>Difusión · Los Chuckys</b>\n\n"
-            "Configura tu difusión usando únicamente:\n"
-            "🎬 Video\n"
+            "Configura tu difusión con:\n"
+            "🖼 Imagen o 🎬 Video\n"
             "🔤 Texto\n"
             "⌨️ Botones\n\n"
             "Luego usa la vista previa antes de enviar."
@@ -556,6 +579,105 @@ def registrar_alerta(bot):
         mostrar_panel(message.chat.id, user_id)
 
     # ========================================================
+    # FOTO / IMAGEN
+    # ========================================================
+    @bot.callback_query_handler(func=lambda call: call.data == "alerta_foto")
+    def alerta_foto(call):
+        user_id = call.from_user.id
+        if not es_admin(user_id):
+            return
+
+        responder_callback(bot, call)
+
+        markup = types.InlineKeyboardMarkup()
+        markup.row(
+            types.InlineKeyboardButton(
+                "🗑 Quitar imagen",
+                callback_data="alerta_quitar_foto",
+            )
+        )
+        markup.row(
+            types.InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data="alerta_regresar",
+            )
+        )
+
+        editar_seguro(
+            bot,
+            "🖼 <b>Envía la imagen para la difusión</b>\n\n"
+            "Envía la foto directamente desde Telegram.",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+
+        bot.register_next_step_handler_by_chat_id(
+            call.message.chat.id,
+            guardar_foto,
+        )
+
+    def guardar_foto(message):
+        user_id = message.from_user.id
+
+        if not es_admin(user_id) or user_id not in alertas:
+            return
+
+        if not message.photo:
+            bot.send_message(
+                message.chat.id,
+                "❌ <b>Debes enviar una imagen/foto.</b>",
+                parse_mode="HTML",
+            )
+            return
+
+        # Telegram entrega varias resoluciones; la última suele ser la mayor.
+        alertas[user_id]["foto"] = message.photo[-1].file_id
+
+        # Solo un medio por difusión: una foto reemplaza al video.
+        alertas[user_id]["video"] = None
+
+        bot.send_message(
+            message.chat.id,
+            "✅ <b>Imagen guardada.</b>",
+            parse_mode="HTML",
+        )
+        mostrar_panel(message.chat.id, user_id)
+
+    @bot.callback_query_handler(func=lambda call: call.data == "alerta_ver_foto")
+    def ver_foto(call):
+        datos = alertas.get(call.from_user.id, {})
+        foto = datos.get("foto")
+
+        if not foto:
+            responder_callback(
+                bot,
+                call,
+                "❌ No agregaste una imagen.",
+                True,
+            )
+            return
+
+        responder_callback(bot, call)
+        bot.send_photo(call.message.chat.id, foto)
+
+    @bot.callback_query_handler(func=lambda call: call.data == "alerta_quitar_foto")
+    def quitar_foto(call):
+        user_id = call.from_user.id
+
+        if user_id in alertas:
+            alertas[user_id]["foto"] = None
+
+        bot.clear_step_handler_by_chat_id(call.message.chat.id)
+        responder_callback(bot, call, "✅ Imagen eliminada.")
+        mostrar_panel(
+            call.message.chat.id,
+            user_id,
+            call.message.message_id,
+        )
+
+    # ========================================================
     # VIDEO
     # ========================================================
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_video")
@@ -583,8 +705,7 @@ def registrar_alerta(bot):
         editar_seguro(
             bot,
             "🎬 <b>Envía el video para la difusión</b>\n\n"
-            "Solo se aceptan videos. Las fotos y otros archivos ya no "
-            "se usarán en este módulo.",
+            "Si ya habías elegido una imagen, el video la reemplazará.",
             call.message.chat.id,
             call.message.message_id,
             reply_markup=markup,
@@ -611,6 +732,9 @@ def registrar_alerta(bot):
             return
 
         alertas[user_id]["video"] = message.video.file_id
+
+        # Solo un medio por difusión: un video reemplaza a la foto.
+        alertas[user_id]["foto"] = None
 
         bot.send_message(
             message.chat.id,
@@ -905,11 +1029,15 @@ def registrar_alerta(bot):
         user_id = call.from_user.id
         datos = alertas.get(user_id, {})
 
-        if not datos.get("texto") and not datos.get("video"):
+        if (
+            not datos.get("texto")
+            and not datos.get("foto")
+            and not datos.get("video")
+        ):
             responder_callback(
                 bot,
                 call,
-                "❌ Agrega texto o video.",
+                "❌ Agrega texto, imagen o video.",
                 True,
             )
             return
@@ -946,7 +1074,11 @@ def registrar_alerta(bot):
         user_id = call.from_user.id
         datos = alertas.get(user_id, {})
 
-        if not datos.get("texto") and not datos.get("video"):
+        if (
+            not datos.get("texto")
+            and not datos.get("foto")
+            and not datos.get("video")
+        ):
             responder_callback(
                 bot,
                 call,
@@ -987,6 +1119,7 @@ def registrar_alerta(bot):
 
         resumen = (
             "🚨 <b>CONFIRMAR DIFUSIÓN</b>\n\n"
+            f"🖼 Imagen: <b>{'SÍ' if datos.get('foto') else 'NO'}</b>\n"
             f"🎬 Video: <b>{'SÍ' if datos.get('video') else 'NO'}</b>\n"
             f"🔤 Texto: <b>{'SÍ' if datos.get('texto') else 'NO'}</b>\n"
             f"⌨️ Botones: <b>{len(datos.get('botones', []))}</b>\n"
