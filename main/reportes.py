@@ -7,7 +7,7 @@ from html import escape
 # ============================================================
 
 # CAMBIA ESTO POR EL ID DE TU GRUPO DE REPORTES
-GRUPO_REPORTES_ID = -1001234567890
+GRUPO_REPORTES_ID = -1004452499126
 
 
 def registrar_reportes(bot):
