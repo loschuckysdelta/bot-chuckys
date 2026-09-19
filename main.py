@@ -5,6 +5,7 @@ from main.botones import registrar_botones
 from main.guardar import registrar_guardar
 from main.alerta import registrar_alerta
 from main.vaucher import registrar_vaucher
+from main.reportes import registrar_reportes
 
 
 # ============================================================
@@ -28,6 +29,7 @@ registrar_botones(bot)
 registrar_guardar(bot)
 registrar_alerta(bot)
 registrar_vaucher(bot)
+registrar_reportes(bot)
 
 
 # ============================================================
