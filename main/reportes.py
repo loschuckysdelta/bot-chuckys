@@ -1,3 +1,5 @@
+import requests
+
 from telebot import types
 from html import escape
 
@@ -6,37 +8,149 @@ from html import escape
 # CONFIGURACIÓN
 # ============================================================
 
-# PON AQUÍ TU ID PERSONAL DE TELEGRAM
+# TU ID PERSONAL DE TELEGRAM
+# Usa /miid para saber cuál es
 ADMIN_ID = 8635600472
 
 
+# ============================================================
+# APIs
+# ============================================================
+
+API_USERS = "https://bot-apis-zkmk.vercel.app/api/users"
+API_BANEADOS = "https://bot-apis-zkmk.vercel.app/api/baneados"
+
+
+# ============================================================
+# BUSCAR USUARIO EN API
+# ============================================================
+
+def buscar_usuario_api(telegram_id):
+
+    try:
+
+        response = requests.get(
+            API_USERS,
+            params={
+                "buscar": str(telegram_id)
+            },
+            timeout=15
+        )
+
+        if response.status_code != 200:
+            print(
+                "❌ Error API users:",
+                response.status_code,
+                response.text
+            )
+            return None
+
+        data = response.json()
+
+        usuarios = data.get("usuarios", [])
+
+        for usuario in usuarios:
+
+            if str(usuario.get("telegramId")) == str(telegram_id):
+                return usuario
+
+        return None
+
+    except Exception as error:
+
+        print(
+            "❌ Error buscando usuario en API:",
+            error
+        )
+
+        return None
+
+
+# ============================================================
+# BANEAR EN API
+# ============================================================
+
+def banear_en_api(
+    telegram_id,
+    baneado_por="Reporte Telegram",
+    motivo="Contenido reportado"
+):
+
+    try:
+
+        payload = {
+            "telegramId": telegram_id,
+            "baneadoPor": baneado_por,
+            "motivoBloqueo": motivo
+        }
+
+        response = requests.post(
+            API_BANEADOS,
+            json=payload,
+            timeout=15
+        )
+
+        print("")
+        print("==============================================")
+        print("🚫 RESPUESTA API BANEADOS")
+        print("STATUS:", response.status_code)
+        print("BODY:", response.text)
+        print("==============================================")
+        print("")
+
+        if response.status_code in [200, 201]:
+
+            try:
+                return True, response.json()
+            except Exception:
+                return True, {}
+
+        return False, {
+            "error": response.text
+        }
+
+    except Exception as error:
+
+        print(
+            "❌ ERROR API BANEADOS:",
+            error
+        )
+
+        return False, {
+            "error": str(error)
+        }
+
+
+# ============================================================
+# REGISTRAR REPORTES
+# ============================================================
+
 def registrar_reportes(bot):
 
-    # ============================================================
+    # ========================================================
     # /MIID
-    # Sirve para saber tu ID personal de Telegram
-    # ============================================================
+    # ========================================================
 
     @bot.message_handler(commands=["miid"])
-    def obtener_mi_id(message):
+    def mi_id(message):
 
         bot.reply_to(
             message,
-            "🆔 <b>Tu ID de Telegram es:</b>\n"
+            "🆔 <b>Tu ID de Telegram:</b>\n\n"
             f"<code>{message.from_user.id}</code>"
         )
 
 
-    # ============================================================
+    # ========================================================
     # /REPORTAR
-    # ============================================================
+    # ========================================================
 
     @bot.message_handler(commands=["reportar", "reporte"])
     def reportar(message):
 
-        # --------------------------------------------------------
-        # Tiene que responder al mensaje que quiere reportar
-        # --------------------------------------------------------
+        # ====================================================
+        # DEBE RESPONDER A OTRO MENSAJE
+        # ====================================================
 
         if not message.reply_to_message:
 
@@ -55,6 +169,10 @@ def registrar_reportes(bot):
         usuario_reportado = mensaje_reportado.from_user
 
 
+        # ====================================================
+        # VALIDAR USUARIO
+        # ====================================================
+
         if not usuario_reportado:
 
             bot.reply_to(
@@ -65,9 +183,9 @@ def registrar_reportes(bot):
             return
 
 
-        # ========================================================
-        # DATOS DEL REPORTE
-        # ========================================================
+        # ====================================================
+        # DATOS
+        # ====================================================
 
         chat_origen = message.chat.id
 
@@ -78,9 +196,9 @@ def registrar_reportes(bot):
         reportador_id = message.from_user.id
 
 
-        # ========================================================
-        # EVITAR QUE SE REPORTE A SÍ MISMO
-        # ========================================================
+        # ====================================================
+        # EVITAR AUTOREPORTE
+        # ====================================================
 
         if usuario_reportado_id == reportador_id:
 
@@ -92,48 +210,111 @@ def registrar_reportes(bot):
             return
 
 
-        # ========================================================
-        # REENVIAR EL VIDEO / FOTO / MENSAJE A TU PRIVADO
-        # ========================================================
+        # ====================================================
+        # REENVIAR VIDEO / FOTO / AUDIO / MENSAJE A TU PRIVADO
+        # ====================================================
 
         try:
 
-            mensaje_reenviado = bot.forward_message(
+            mensaje_enviado = bot.forward_message(
                 chat_id=ADMIN_ID,
                 from_chat_id=chat_origen,
                 message_id=mensaje_original_id
             )
 
-        except Exception as error:
+        except Exception as error_forward:
 
-            print("")
-            print("=====================================")
-            print("❌ ERROR ENVIANDO REPORTE AL PRIVADO")
-            print("ADMIN ID:", ADMIN_ID)
-            print("CHAT ORIGEN:", chat_origen)
-            print("MENSAJE:", mensaje_original_id)
-            print("ERROR:", error)
-            print("=====================================")
-            print("")
-
-            bot.reply_to(
-                message,
-                "❌ <b>No pude enviar el reporte al administrador.</b>\n\n"
-                "El administrador debe iniciar primero el bot en privado."
+            print(
+                "⚠️ No se pudo reenviar. Intentando copiar:",
+                error_forward
             )
 
-            return
+            # Si Telegram no permite reenviarlo,
+            # intentamos copiar el contenido.
+            try:
+
+                mensaje_enviado = bot.copy_message(
+                    chat_id=ADMIN_ID,
+                    from_chat_id=chat_origen,
+                    message_id=mensaje_original_id
+                )
+
+            except Exception as error_copy:
+
+                print("")
+                print("==============================================")
+                print("❌ ERROR ENVIANDO REPORTE")
+                print("ADMIN ID:", ADMIN_ID)
+                print("CHAT ORIGEN:", chat_origen)
+                print("MESSAGE ID:", mensaje_original_id)
+                print("FORWARD:", error_forward)
+                print("COPY:", error_copy)
+                print("==============================================")
+                print("")
+
+                bot.reply_to(
+                    message,
+                    "❌ <b>No pude enviar el contenido al administrador.</b>\n\n"
+                    "Asegúrate de que el administrador haya iniciado "
+                    "el bot en privado."
+                )
+
+                return
 
 
-        # ========================================================
+        # ====================================================
+        # DATOS USUARIO REPORTADO
+        # ====================================================
+
+        nombre_reportado = escape(
+            usuario_reportado.first_name
+            or "Sin nombre"
+        )
+
+        username_reportado = (
+            f"@{escape(usuario_reportado.username)}"
+            if usuario_reportado.username
+            else "Sin username"
+        )
+
+
+        # ====================================================
+        # DATOS REPORTADOR
+        # ====================================================
+
+        nombre_reportador = escape(
+            message.from_user.first_name
+            or "Sin nombre"
+        )
+
+        username_reportador = (
+            f"@{escape(message.from_user.username)}"
+            if message.from_user.username
+            else "Sin username"
+        )
+
+
+        # ====================================================
+        # GRUPO
+        # ====================================================
+
+        nombre_grupo = escape(
+            message.chat.title
+            or "Grupo"
+        )
+
+
+        # ====================================================
         # BOTONERA
-        # ========================================================
+        # ====================================================
 
-        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup = types.InlineKeyboardMarkup(
+            row_width=2
+        )
 
 
         boton_banear = types.InlineKeyboardButton(
-            "🔨 Banear",
+            text="🔨 Banear",
             callback_data=(
                 f"rban:"
                 f"{chat_origen}:"
@@ -144,7 +325,7 @@ def registrar_reportes(bot):
 
 
         boton_mutear = types.InlineKeyboardButton(
-            "🔇 Mutear",
+            text="🔇 Mutear",
             callback_data=(
                 f"rmute:"
                 f"{chat_origen}:"
@@ -160,46 +341,9 @@ def registrar_reportes(bot):
         )
 
 
-        # ========================================================
-        # INFORMACIÓN DEL REPORTADO
-        # ========================================================
-
-        nombre_reportado = escape(
-            usuario_reportado.first_name or "Sin nombre"
-        )
-
-
-        username_reportado = (
-            f"@{escape(usuario_reportado.username)}"
-            if usuario_reportado.username
-            else "Sin username"
-        )
-
-
-        # ========================================================
-        # INFORMACIÓN DEL QUE REPORTA
-        # ========================================================
-
-        nombre_reportador = escape(
-            message.from_user.first_name or "Sin nombre"
-        )
-
-
-        username_reportador = (
-            f"@{escape(message.from_user.username)}"
-            if message.from_user.username
-            else "Sin username"
-        )
-
-
-        nombre_grupo = escape(
-            message.chat.title or "Grupo"
-        )
-
-
-        # ========================================================
-        # MENSAJE DE REPORTE
-        # ========================================================
+        # ====================================================
+        # INFORMACIÓN DEL REPORTE
+        # ====================================================
 
         texto = (
             "🚨 <b>NUEVO REPORTE</b>\n\n"
@@ -214,7 +358,7 @@ def registrar_reportes(bot):
             f"├ Usuario: {username_reportador}\n"
             f"└ ID: <code>{reportador_id}</code>\n\n"
 
-            "🏠 <b>GRUPO</b>\n"
+            "🏠 <b>GRUPO DE ORIGEN</b>\n"
             f"├ Nombre: {nombre_grupo}\n"
             f"└ ID: <code>{chat_origen}</code>\n\n"
 
@@ -222,31 +366,32 @@ def registrar_reportes(bot):
         )
 
 
-        # ========================================================
-        # ENVIAR LA BOTONERA A TU PRIVADO
-        # RESPONDIENDO AL VIDEO/FOTO REENVIADO
-        # ========================================================
+        # ====================================================
+        # ENVIAR INFO DEBAJO DEL VIDEO/FOTO
+        # ====================================================
 
         try:
 
             bot.send_message(
                 chat_id=ADMIN_ID,
                 text=texto,
-                reply_to_message_id=mensaje_reenviado.message_id,
+                reply_to_message_id=mensaje_enviado.message_id,
                 reply_markup=markup
             )
 
         except Exception as error:
 
             print(
-                "❌ Error enviando información del reporte:",
+                "❌ Error enviando información:",
                 error
             )
 
+            return
 
-        # ========================================================
-        # CONFIRMAR AL USUARIO
-        # ========================================================
+
+        # ====================================================
+        # CONFIRMAR REPORTE
+        # ====================================================
 
         try:
 
@@ -260,45 +405,51 @@ def registrar_reportes(bot):
             pass
 
 
-        # ========================================================
-        # BORRAR EL COMANDO /REPORTAR
-        # ========================================================
+        # ====================================================
+        # BORRAR /REPORTAR
+        # ====================================================
 
         try:
 
             bot.delete_message(
-                message.chat.id,
-                message.message_id
+                chat_id=message.chat.id,
+                message_id=message.message_id
             )
 
         except Exception:
             pass
 
 
-    # ============================================================
+    # ========================================================
     # 🔨 BANEAR
-    # ============================================================
+    # ========================================================
 
     @bot.callback_query_handler(
-        func=lambda call: call.data.startswith("rban:")
+        func=lambda call: (
+            call.data
+            and call.data.startswith("rban:")
+        )
     )
     def banear_reportado(call):
 
-        # Solo tú puedes usar el botón
+        # ====================================================
+        # SOLO EL ADMIN
+        # ====================================================
+
         if call.from_user.id != ADMIN_ID:
 
             bot.answer_callback_query(
                 call.id,
-                "❌ No tienes permiso para hacer esto.",
+                "❌ No tienes permiso para realizar esta acción.",
                 show_alert=True
             )
 
             return
 
 
-        # ========================================================
-        # LEER DATOS DEL BOTÓN
-        # ========================================================
+        # ====================================================
+        # DATOS CALLBACK
+        # ====================================================
 
         try:
 
@@ -310,7 +461,12 @@ def registrar_reportes(bot):
 
             mensaje_id = int(datos[3])
 
-        except Exception:
+        except Exception as error:
+
+            print(
+                "❌ Error leyendo callback:",
+                error
+            )
 
             bot.answer_callback_query(
                 call.id,
@@ -321,9 +477,41 @@ def registrar_reportes(bot):
             return
 
 
-        # ========================================================
-        # BANEAR AL USUARIO
-        # ========================================================
+        # ====================================================
+        # BUSCAR USUARIO EN API
+        # ====================================================
+
+        usuario_api = buscar_usuario_api(
+            usuario_id
+        )
+
+
+        if usuario_api:
+
+            nombre_usuario = (
+                usuario_api.get("nombre")
+                or "Sin nombre"
+            )
+
+            username_usuario = (
+                usuario_api.get("username")
+                or ""
+            )
+
+        else:
+
+            nombre_usuario = "Sin nombre"
+            username_usuario = ""
+
+
+        # ====================================================
+        # 1. BANEAR DEL GRUPO DE TELEGRAM
+        # ====================================================
+
+        telegram_baneado = False
+
+        error_telegram = ""
+
 
         try:
 
@@ -332,24 +520,41 @@ def registrar_reportes(bot):
                 user_id=usuario_id
             )
 
+            telegram_baneado = True
+
         except Exception as error:
 
-            print("❌ ERROR BANEANDO:", error)
+            error_telegram = str(error)
+
+            print(
+                "❌ ERROR BANEANDO EN TELEGRAM:",
+                error
+            )
+
+
+        # ====================================================
+        # SI NO SE PUDO BANEAR, DETENER
+        # ====================================================
+
+        if not telegram_baneado:
 
             bot.answer_callback_query(
                 call.id,
-                f"❌ No pude banear: {str(error)[:120]}",
+                (
+                    "❌ No pude banear al usuario.\n"
+                    f"{error_telegram[:120]}"
+                ),
                 show_alert=True
             )
 
             return
 
 
-        # ========================================================
-        # BORRAR EL VIDEO / FOTO / MENSAJE ORIGINAL
-        # ========================================================
+        # ====================================================
+        # 2. BORRAR FOTO / VIDEO / MENSAJE ORIGINAL
+        # ====================================================
 
-        contenido_eliminado = True
+        contenido_eliminado = False
 
 
         try:
@@ -359,19 +564,52 @@ def registrar_reportes(bot):
                 message_id=mensaje_id
             )
 
+            contenido_eliminado = True
+
         except Exception as error:
 
-            contenido_eliminado = False
-
             print(
-                "⚠️ Usuario baneado pero no pude borrar el contenido:",
+                "⚠️ Usuario baneado pero no pude borrar contenido:",
                 error
             )
 
 
-        # ========================================================
-        # QUITAR LOS BOTONES
-        # ========================================================
+        # ====================================================
+        # 3. NOMBRE DEL ADMINISTRADOR
+        # ====================================================
+
+        nombre_admin = (
+            call.from_user.first_name
+            or "Administrador"
+        )
+
+
+        if call.from_user.username:
+
+            baneado_por = (
+                f"{nombre_admin} "
+                f"(@{call.from_user.username})"
+            )
+
+        else:
+
+            baneado_por = nombre_admin
+
+
+        # ====================================================
+        # 4. BANEAR EN API
+        # ====================================================
+
+        api_baneado, respuesta_api = banear_en_api(
+            telegram_id=usuario_id,
+            baneado_por=baneado_por,
+            motivo="Contenido reportado"
+        )
+
+
+        # ====================================================
+        # 5. QUITAR BOTONES
+        # ====================================================
 
         try:
 
@@ -381,73 +619,132 @@ def registrar_reportes(bot):
                 reply_markup=None
             )
 
-        except Exception:
-            pass
+        except Exception as error:
 
-
-        # ========================================================
-        # RESULTADO
-        # ========================================================
-
-        if contenido_eliminado:
-
-            bot.answer_callback_query(
-                call.id,
-                "🔨 Usuario baneado y contenido eliminado.",
-                show_alert=True
+            print(
+                "⚠️ No pude quitar botonera:",
+                error
             )
 
 
-            bot.send_message(
-                ADMIN_ID,
-                "✅ <b>REPORTE RESUELTO</b>\n\n"
-                f"👤 ID: <code>{usuario_id}</code>\n"
-                "🔨 Estado: <b>BANEADO</b>\n"
-                "🗑 Contenido: <b>ELIMINADO</b>"
+        # ====================================================
+        # ESTADOS
+        # ====================================================
+
+        if contenido_eliminado:
+
+            estado_contenido = "✅ Eliminado"
+
+        else:
+
+            estado_contenido = "⚠️ No se pudo eliminar"
+
+
+        if api_baneado:
+
+            estado_api = "✅ Baneado"
+
+        else:
+
+            estado_api = "⚠️ Error"
+
+
+        if username_usuario:
+
+            username_texto = (
+                f"@{escape(str(username_usuario))}"
+            )
+
+        else:
+
+            username_texto = "Sin username"
+
+
+        # ====================================================
+        # AVISO
+        # ====================================================
+
+        resultado = (
+            "🚫 <b>USUARIO BANEADO</b>\n\n"
+
+            f"👤 <b>Nombre:</b> "
+            f"{escape(str(nombre_usuario))}\n"
+
+            f"📱 <b>Usuario:</b> "
+            f"{username_texto}\n"
+
+            f"🆔 <b>ID:</b> "
+            f"<code>{usuario_id}</code>\n\n"
+
+            "🔨 <b>Telegram:</b> ✅ Baneado\n"
+
+            f"🗑 <b>Contenido:</b> "
+            f"{estado_contenido}\n"
+
+            f"🌐 <b>API baneados:</b> "
+            f"{estado_api}\n\n"
+
+            f"🛡 <b>Baneado por:</b> "
+            f"{escape(baneado_por)}\n"
+
+            "📝 <b>Motivo:</b> "
+            "Contenido reportado"
+        )
+
+
+        bot.send_message(
+            ADMIN_ID,
+            resultado
+        )
+
+
+        if api_baneado:
+
+            bot.answer_callback_query(
+                call.id,
+                "🚫 Usuario baneado correctamente.",
+                show_alert=True
             )
 
         else:
 
             bot.answer_callback_query(
                 call.id,
-                "🔨 Usuario baneado. No pude eliminar el contenido.",
+                "⚠️ Baneado de Telegram, pero hubo error en la API.",
                 show_alert=True
             )
 
 
-            bot.send_message(
-                ADMIN_ID,
-                "✅ <b>REPORTE RESUELTO</b>\n\n"
-                f"👤 ID: <code>{usuario_id}</code>\n"
-                "🔨 Estado: <b>BANEADO</b>\n"
-                "⚠️ Contenido: <b>NO SE PUDO ELIMINAR</b>"
-            )
-
-
-    # ============================================================
+    # ========================================================
     # 🔇 MUTEAR
-    # ============================================================
+    # ========================================================
 
     @bot.callback_query_handler(
-        func=lambda call: call.data.startswith("rmute:")
+        func=lambda call: (
+            call.data
+            and call.data.startswith("rmute:")
+        )
     )
     def mutear_reportado(call):
 
-        # Solo tú puedes usar el botón
+        # ====================================================
+        # SOLO EL ADMIN
+        # ====================================================
+
         if call.from_user.id != ADMIN_ID:
 
             bot.answer_callback_query(
                 call.id,
-                "❌ No tienes permiso para hacer esto.",
+                "❌ No tienes permiso para realizar esta acción.",
                 show_alert=True
             )
 
             return
 
 
-        # ========================================================
-        # LEER DATOS
-        # ========================================================
+        # ====================================================
+        # DATOS
+        # ====================================================
 
         try:
 
@@ -470,9 +767,9 @@ def registrar_reportes(bot):
             return
 
 
-        # ========================================================
-        # PERMISOS DEL MUTE
-        # ========================================================
+        # ====================================================
+        # PERMISOS MUTE
+        # ====================================================
 
         permisos = types.ChatPermissions(
             can_send_messages=False,
@@ -488,9 +785,9 @@ def registrar_reportes(bot):
         )
 
 
-        # ========================================================
+        # ====================================================
         # MUTEAR
-        # ========================================================
+        # ====================================================
 
         try:
 
@@ -502,25 +799,31 @@ def registrar_reportes(bot):
 
         except Exception as error:
 
-            print("❌ ERROR MUTEANDO:", error)
+            print(
+                "❌ ERROR MUTEANDO:",
+                error
+            )
 
             bot.answer_callback_query(
                 call.id,
-                f"❌ No pude mutear: {str(error)[:120]}",
+                (
+                    "❌ No pude mutear.\n"
+                    f"{str(error)[:120]}"
+                ),
                 show_alert=True
             )
 
             return
 
 
-        # ========================================================
-        # AL MUTEAR NO BORRAMOS EL CONTENIDO
-        # ========================================================
+        # ====================================================
+        # NO BORRAR CONTENIDO AL MUTEAR
+        # ====================================================
 
 
-        # ========================================================
+        # ====================================================
         # QUITAR BOTONES
-        # ========================================================
+        # ====================================================
 
         try:
 
@@ -534,9 +837,9 @@ def registrar_reportes(bot):
             pass
 
 
-        # ========================================================
-        # CONFIRMAR
-        # ========================================================
+        # ====================================================
+        # CONFIRMACIÓN
+        # ====================================================
 
         bot.answer_callback_query(
             call.id,
@@ -547,8 +850,13 @@ def registrar_reportes(bot):
 
         bot.send_message(
             ADMIN_ID,
-            "✅ <b>REPORTE RESUELTO</b>\n\n"
-            f"👤 ID: <code>{usuario_id}</code>\n"
-            "🔇 Estado: <b>MUTEADO</b>\n"
-            "📸 Contenido: <b>NO ELIMINADO</b>"
+            (
+                "🔇 <b>USUARIO MUTEADO</b>\n\n"
+                f"👤 <b>ID:</b> "
+                f"<code>{usuario_id}</code>\n\n"
+
+                "🔇 <b>Estado:</b> Muteado\n"
+                "📸 <b>Contenido:</b> No eliminado\n"
+                "🌐 <b>API baneados:</b> No modificado"
+            )
         )
