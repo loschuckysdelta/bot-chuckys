@@ -6,89 +6,49 @@ from html import escape
 # CONFIGURACIÓN
 # ============================================================
 
-GRUPO_REPORTES_ID = -1004452499126
+# PON AQUÍ TU ID PERSONAL DE TELEGRAM
+ADMIN_ID = 8635600472
 
 
 def registrar_reportes(bot):
 
     # ============================================================
-    # VERIFICAR ADMIN DEL GRUPO DE REPORTES
+    # /MIID
+    # Sirve para saber tu ID personal de Telegram
     # ============================================================
 
-    def es_admin_reportes(user_id):
-        try:
-            miembro = bot.get_chat_member(
-                GRUPO_REPORTES_ID,
-                user_id
-            )
+    @bot.message_handler(commands=["miid"])
+    def obtener_mi_id(message):
 
-            return miembro.status in [
-                "administrator",
-                "creator"
-            ]
-
-        except Exception as error:
-            print("❌ Error verificando administrador:", error)
-            return False
+        bot.reply_to(
+            message,
+            "🆔 <b>Tu ID de Telegram es:</b>\n"
+            f"<code>{message.from_user.id}</code>"
+        )
 
 
     # ============================================================
-    # COMANDO /TESTREPORTE
-    # ============================================================
-
-    @bot.message_handler(commands=["testreporte"])
-    def test_reporte(message):
-
-        try:
-            bot.send_message(
-                GRUPO_REPORTES_ID,
-                "✅ <b>GRUPO DE REPORTES CONECTADO</b>\n\n"
-                "El bot puede enviar mensajes correctamente."
-            )
-
-            bot.reply_to(
-                message,
-                "✅ Grupo de reportes conectado correctamente."
-            )
-
-        except Exception as error:
-
-            print("❌ ERROR TEST REPORTES:", error)
-
-            bot.reply_to(
-                message,
-                "❌ <b>No puedo enviar mensajes al grupo de reportes.</b>\n\n"
-                f"<code>{escape(str(error))}</code>"
-            )
-
-
-    # ============================================================
-    # COMANDO /REPORTAR
+    # /REPORTAR
     # ============================================================
 
     @bot.message_handler(commands=["reportar", "reporte"])
     def reportar(message):
 
-        # ========================================================
-        # DEBE RESPONDER A ALGO
-        # ========================================================
+        # --------------------------------------------------------
+        # Tiene que responder al mensaje que quiere reportar
+        # --------------------------------------------------------
 
         if not message.reply_to_message:
 
             bot.reply_to(
                 message,
                 "⚠️ <b>Debes responder al contenido que quieres reportar.</b>\n\n"
-                "Ejemplo:\n"
-                "Responde al video, foto o mensaje y escribe:\n"
+                "Responde al video, foto, audio o mensaje y escribe:\n"
                 "<code>/reportar</code>"
             )
 
             return
 
-
-        # ========================================================
-        # MENSAJE REPORTADO
-        # ========================================================
 
         mensaje_reportado = message.reply_to_message
 
@@ -99,14 +59,14 @@ def registrar_reportes(bot):
 
             bot.reply_to(
                 message,
-                "❌ No pude identificar quién envió ese contenido."
+                "❌ No pude identificar al usuario que envió ese contenido."
             )
 
             return
 
 
         # ========================================================
-        # DATOS
+        # DATOS DEL REPORTE
         # ========================================================
 
         chat_origen = message.chat.id
@@ -119,7 +79,7 @@ def registrar_reportes(bot):
 
 
         # ========================================================
-        # EVITAR AUTOREPORTE
+        # EVITAR QUE SE REPORTE A SÍ MISMO
         # ========================================================
 
         if usuario_reportado_id == reportador_id:
@@ -133,13 +93,13 @@ def registrar_reportes(bot):
 
 
         # ========================================================
-        # REENVIAR EXACTAMENTE EL VIDEO / FOTO / MENSAJE
+        # REENVIAR EL VIDEO / FOTO / MENSAJE A TU PRIVADO
         # ========================================================
 
         try:
 
             mensaje_reenviado = bot.forward_message(
-                chat_id=GRUPO_REPORTES_ID,
+                chat_id=ADMIN_ID,
                 from_chat_id=chat_origen,
                 message_id=mensaje_original_id
             )
@@ -147,34 +107,32 @@ def registrar_reportes(bot):
         except Exception as error:
 
             print("")
-            print("============================================")
-            print("❌ ERROR REENVIANDO REPORTE")
-            print("GRUPO REPORTES:", GRUPO_REPORTES_ID)
-            print("GRUPO ORIGEN:", chat_origen)
-            print("MENSAJE ID:", mensaje_original_id)
+            print("=====================================")
+            print("❌ ERROR ENVIANDO REPORTE AL PRIVADO")
+            print("ADMIN ID:", ADMIN_ID)
+            print("CHAT ORIGEN:", chat_origen)
+            print("MENSAJE:", mensaje_original_id)
             print("ERROR:", error)
-            print("============================================")
+            print("=====================================")
             print("")
 
             bot.reply_to(
                 message,
-                "❌ <b>No pude enviar el contenido al grupo de reportes.</b>\n\n"
-                f"<code>{escape(str(error))}</code>"
+                "❌ <b>No pude enviar el reporte al administrador.</b>\n\n"
+                "El administrador debe iniciar primero el bot en privado."
             )
 
             return
 
 
         # ========================================================
-        # BOTONES
+        # BOTONERA
         # ========================================================
 
-        markup = types.InlineKeyboardMarkup(
-            row_width=2
-        )
+        markup = types.InlineKeyboardMarkup(row_width=2)
 
 
-        btn_banear = types.InlineKeyboardButton(
+        boton_banear = types.InlineKeyboardButton(
             "🔨 Banear",
             callback_data=(
                 f"rban:"
@@ -185,7 +143,7 @@ def registrar_reportes(bot):
         )
 
 
-        btn_mutear = types.InlineKeyboardButton(
+        boton_mutear = types.InlineKeyboardButton(
             "🔇 Mutear",
             callback_data=(
                 f"rmute:"
@@ -197,13 +155,13 @@ def registrar_reportes(bot):
 
 
         markup.add(
-            btn_banear,
-            btn_mutear
+            boton_banear,
+            boton_mutear
         )
 
 
         # ========================================================
-        # DATOS DEL REPORTADO
+        # INFORMACIÓN DEL REPORTADO
         # ========================================================
 
         nombre_reportado = escape(
@@ -211,19 +169,15 @@ def registrar_reportes(bot):
         )
 
 
-        if usuario_reportado.username:
-
-            username_reportado = (
-                f"@{escape(usuario_reportado.username)}"
-            )
-
-        else:
-
-            username_reportado = "Sin username"
+        username_reportado = (
+            f"@{escape(usuario_reportado.username)}"
+            if usuario_reportado.username
+            else "Sin username"
+        )
 
 
         # ========================================================
-        # DATOS DEL QUE REPORTA
+        # INFORMACIÓN DEL QUE REPORTA
         # ========================================================
 
         nombre_reportador = escape(
@@ -231,20 +185,12 @@ def registrar_reportes(bot):
         )
 
 
-        if message.from_user.username:
+        username_reportador = (
+            f"@{escape(message.from_user.username)}"
+            if message.from_user.username
+            else "Sin username"
+        )
 
-            username_reportador = (
-                f"@{escape(message.from_user.username)}"
-            )
-
-        else:
-
-            username_reportador = "Sin username"
-
-
-        # ========================================================
-        # GRUPO ORIGEN
-        # ========================================================
 
         nombre_grupo = escape(
             message.chat.title or "Grupo"
@@ -252,7 +198,7 @@ def registrar_reportes(bot):
 
 
         # ========================================================
-        # MENSAJE DE INFORMACIÓN
+        # MENSAJE DE REPORTE
         # ========================================================
 
         texto = (
@@ -268,22 +214,23 @@ def registrar_reportes(bot):
             f"├ Usuario: {username_reportador}\n"
             f"└ ID: <code>{reportador_id}</code>\n\n"
 
-            "🏠 <b>GRUPO DE ORIGEN</b>\n"
+            "🏠 <b>GRUPO</b>\n"
             f"├ Nombre: {nombre_grupo}\n"
             f"└ ID: <code>{chat_origen}</code>\n\n"
 
-            "👇 <b>Selecciona qué deseas hacer:</b>"
+            "👇 <b>Selecciona una acción:</b>"
         )
 
 
         # ========================================================
-        # ENVIAR INFO RESPONDIENDO AL VIDEO/FOTO
+        # ENVIAR LA BOTONERA A TU PRIVADO
+        # RESPONDIENDO AL VIDEO/FOTO REENVIADO
         # ========================================================
 
         try:
 
             bot.send_message(
-                chat_id=GRUPO_REPORTES_ID,
+                chat_id=ADMIN_ID,
                 text=texto,
                 reply_to_message_id=mensaje_reenviado.message_id,
                 reply_markup=markup
@@ -291,11 +238,14 @@ def registrar_reportes(bot):
 
         except Exception as error:
 
-            print("❌ Error enviando botonera:", error)
+            print(
+                "❌ Error enviando información del reporte:",
+                error
+            )
 
 
         # ========================================================
-        # CONFIRMAR AL QUE REPORTÓ
+        # CONFIRMAR AL USUARIO
         # ========================================================
 
         try:
@@ -303,7 +253,7 @@ def registrar_reportes(bot):
             bot.reply_to(
                 message,
                 "✅ <b>Reporte enviado correctamente.</b>\n\n"
-                "Los administradores revisarán el contenido."
+                "El administrador revisará el contenido."
             )
 
         except Exception:
@@ -311,7 +261,7 @@ def registrar_reportes(bot):
 
 
         # ========================================================
-        # BORRAR /REPORTAR DEL GRUPO
+        # BORRAR EL COMANDO /REPORTAR
         # ========================================================
 
         try:
@@ -334,15 +284,161 @@ def registrar_reportes(bot):
     )
     def banear_reportado(call):
 
-        # ========================================================
-        # SOLO ADMINS DEL GRUPO DE REPORTES
-        # ========================================================
-
-        if not es_admin_reportes(call.from_user.id):
+        # Solo tú puedes usar el botón
+        if call.from_user.id != ADMIN_ID:
 
             bot.answer_callback_query(
                 call.id,
-                "❌ Solo los administradores pueden usar este botón.",
+                "❌ No tienes permiso para hacer esto.",
+                show_alert=True
+            )
+
+            return
+
+
+        # ========================================================
+        # LEER DATOS DEL BOTÓN
+        # ========================================================
+
+        try:
+
+            datos = call.data.split(":")
+
+            chat_origen = int(datos[1])
+
+            usuario_id = int(datos[2])
+
+            mensaje_id = int(datos[3])
+
+        except Exception:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Datos del reporte inválidos.",
+                show_alert=True
+            )
+
+            return
+
+
+        # ========================================================
+        # BANEAR AL USUARIO
+        # ========================================================
+
+        try:
+
+            bot.ban_chat_member(
+                chat_id=chat_origen,
+                user_id=usuario_id
+            )
+
+        except Exception as error:
+
+            print("❌ ERROR BANEANDO:", error)
+
+            bot.answer_callback_query(
+                call.id,
+                f"❌ No pude banear: {str(error)[:120]}",
+                show_alert=True
+            )
+
+            return
+
+
+        # ========================================================
+        # BORRAR EL VIDEO / FOTO / MENSAJE ORIGINAL
+        # ========================================================
+
+        contenido_eliminado = True
+
+
+        try:
+
+            bot.delete_message(
+                chat_id=chat_origen,
+                message_id=mensaje_id
+            )
+
+        except Exception as error:
+
+            contenido_eliminado = False
+
+            print(
+                "⚠️ Usuario baneado pero no pude borrar el contenido:",
+                error
+            )
+
+
+        # ========================================================
+        # QUITAR LOS BOTONES
+        # ========================================================
+
+        try:
+
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=None
+            )
+
+        except Exception:
+            pass
+
+
+        # ========================================================
+        # RESULTADO
+        # ========================================================
+
+        if contenido_eliminado:
+
+            bot.answer_callback_query(
+                call.id,
+                "🔨 Usuario baneado y contenido eliminado.",
+                show_alert=True
+            )
+
+
+            bot.send_message(
+                ADMIN_ID,
+                "✅ <b>REPORTE RESUELTO</b>\n\n"
+                f"👤 ID: <code>{usuario_id}</code>\n"
+                "🔨 Estado: <b>BANEADO</b>\n"
+                "🗑 Contenido: <b>ELIMINADO</b>"
+            )
+
+        else:
+
+            bot.answer_callback_query(
+                call.id,
+                "🔨 Usuario baneado. No pude eliminar el contenido.",
+                show_alert=True
+            )
+
+
+            bot.send_message(
+                ADMIN_ID,
+                "✅ <b>REPORTE RESUELTO</b>\n\n"
+                f"👤 ID: <code>{usuario_id}</code>\n"
+                "🔨 Estado: <b>BANEADO</b>\n"
+                "⚠️ Contenido: <b>NO SE PUDO ELIMINAR</b>"
+            )
+
+
+    # ============================================================
+    # 🔇 MUTEAR
+    # ============================================================
+
+    @bot.callback_query_handler(
+        func=lambda call: call.data.startswith("rmute:")
+    )
+    def mutear_reportado(call):
+
+        # Solo tú puedes usar el botón
+        if call.from_user.id != ADMIN_ID:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ No tienes permiso para hacer esto.",
                 show_alert=True
             )
 
@@ -368,171 +464,6 @@ def registrar_reportes(bot):
             bot.answer_callback_query(
                 call.id,
                 "❌ Datos del reporte inválidos.",
-                show_alert=True
-            )
-
-            return
-
-
-        # ========================================================
-        # BANEAR USUARIO
-        # ========================================================
-
-        try:
-
-            bot.ban_chat_member(
-                chat_id=chat_origen,
-                user_id=usuario_id
-            )
-
-        except Exception as error:
-
-            print("❌ Error baneando usuario:", error)
-
-            bot.answer_callback_query(
-                call.id,
-                f"❌ No pude banear:\n{str(error)[:150]}",
-                show_alert=True
-            )
-
-            return
-
-
-        # ========================================================
-        # ELIMINAR VIDEO/FOTO/MENSAJE ORIGINAL
-        # ========================================================
-
-        contenido_eliminado = True
-
-        try:
-
-            bot.delete_message(
-                chat_id=chat_origen,
-                message_id=mensaje_id
-            )
-
-        except Exception as error:
-
-            contenido_eliminado = False
-
-            print(
-                "⚠️ Usuario baneado, pero no pude borrar contenido:",
-                error
-            )
-
-
-        # ========================================================
-        # QUITAR BOTONERA
-        # ========================================================
-
-        try:
-
-            bot.edit_message_reply_markup(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                reply_markup=None
-            )
-
-        except Exception:
-            pass
-
-
-        # ========================================================
-        # AVISO
-        # ========================================================
-
-        if contenido_eliminado:
-
-            bot.answer_callback_query(
-                call.id,
-                "🔨 Usuario baneado y contenido eliminado.",
-                show_alert=True
-            )
-
-        else:
-
-            bot.answer_callback_query(
-                call.id,
-                "🔨 Usuario baneado, pero no pude borrar el contenido.",
-                show_alert=True
-            )
-
-
-        # ========================================================
-        # MODERADOR
-        # ========================================================
-
-        nombre_admin = escape(
-            call.from_user.first_name or "Administrador"
-        )
-
-
-        estado_contenido = (
-            "🗑 Eliminado"
-            if contenido_eliminado
-            else "⚠️ No eliminado"
-        )
-
-
-        bot.send_message(
-            GRUPO_REPORTES_ID,
-
-            "✅ <b>REPORTE RESUELTO</b>\n\n"
-
-            f"👤 Usuario: <code>{usuario_id}</code>\n"
-            "🔨 Acción: <b>BANEADO</b>\n"
-            f"📸 Contenido: <b>{estado_contenido}</b>\n\n"
-
-            f"🛡 Moderador: "
-            f"<a href='tg://user?id={call.from_user.id}'>"
-            f"{nombre_admin}"
-            "</a>"
-        )
-
-
-    # ============================================================
-    # 🔇 MUTEAR
-    # ============================================================
-
-    @bot.callback_query_handler(
-        func=lambda call: call.data.startswith("rmute:")
-    )
-    def mutear_reportado(call):
-
-        # ========================================================
-        # SOLO ADMINS
-        # ========================================================
-
-        if not es_admin_reportes(call.from_user.id):
-
-            bot.answer_callback_query(
-                call.id,
-                "❌ Solo los administradores pueden usar este botón.",
-                show_alert=True
-            )
-
-            return
-
-
-        # ========================================================
-        # LEER DATOS
-        # ========================================================
-
-        try:
-
-            datos = call.data.split(":")
-
-            chat_origen = int(datos[1])
-
-            usuario_id = int(datos[2])
-
-            mensaje_id = int(datos[3])
-
-        except Exception:
-
-            bot.answer_callback_query(
-                call.id,
-                "❌ Datos inválidos.",
                 show_alert=True
             )
 
@@ -571,11 +502,11 @@ def registrar_reportes(bot):
 
         except Exception as error:
 
-            print("❌ Error muteando:", error)
+            print("❌ ERROR MUTEANDO:", error)
 
             bot.answer_callback_query(
                 call.id,
-                f"❌ No pude mutear:\n{str(error)[:150]}",
+                f"❌ No pude mutear: {str(error)[:120]}",
                 show_alert=True
             )
 
@@ -583,13 +514,12 @@ def registrar_reportes(bot):
 
 
         # ========================================================
-        # IMPORTANTE:
-        # MUTEAR NO BORRA EL VIDEO/FOTO
+        # AL MUTEAR NO BORRAMOS EL CONTENIDO
         # ========================================================
 
 
         # ========================================================
-        # QUITAR BOTONERA
+        # QUITAR BOTONES
         # ========================================================
 
         try:
@@ -615,22 +545,10 @@ def registrar_reportes(bot):
         )
 
 
-        nombre_admin = escape(
-            call.from_user.first_name or "Administrador"
-        )
-
-
         bot.send_message(
-            GRUPO_REPORTES_ID,
-
+            ADMIN_ID,
             "✅ <b>REPORTE RESUELTO</b>\n\n"
-
-            f"👤 Usuario: <code>{usuario_id}</code>\n"
-            "🔇 Acción: <b>MUTEADO</b>\n"
-            "📸 Contenido: <b>NO eliminado</b>\n\n"
-
-            f"🛡 Moderador: "
-            f"<a href='tg://user?id={call.from_user.id}'>"
-            f"{nombre_admin}"
-            "</a>"
+            f"👤 ID: <code>{usuario_id}</code>\n"
+            "🔇 Estado: <b>MUTEADO</b>\n"
+            "📸 Contenido: <b>NO ELIMINADO</b>"
         )
