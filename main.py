@@ -12,7 +12,7 @@ from main.reportes import registrar_reportes
 # CONFIGURACIÓN
 # ============================================================
 
-TOKEN = "8849210272:AAG5tPxo-Zq2eHyI_EETmZB7wCPfWGPxcZw"
+TOKEN = "8849210272:AAE84XFogP1KwSy3NkZR1OpAASanLxWtVr0"
 
 bot = telebot.TeleBot(
     TOKEN,
