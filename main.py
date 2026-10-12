@@ -1,3 +1,5 @@
+
+import os
 import telebot
 
 from main.start import registrar_start
@@ -7,12 +9,15 @@ from main.alerta import registrar_alerta
 from main.vaucher import registrar_vaucher
 from main.reportes import registrar_reportes
 
+# NUEVO: SISTEMA VIP
+from main.vip import register_vip
+
 
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
 
-TOKEN = "8849210272:AAE84XFogP1KwSy3NkZR1OpAASanLxWtVr0"
+TOKEN = os.environ["8849210272:AAE84XFogP1KwSy3NkZR1OpAASanLxWtVr0"]
 
 bot = telebot.TeleBot(
     TOKEN,
@@ -31,6 +36,9 @@ registrar_alerta(bot)
 registrar_vaucher(bot)
 registrar_reportes(bot)
 
+# NUEVO: REGISTRAR SISTEMA VIP
+register_vip(bot)
+
 
 # ============================================================
 # INICIAR BOT
@@ -39,9 +47,15 @@ registrar_reportes(bot)
 if __name__ == "__main__":
 
     print("🤖 BOT INICIADO")
+    print("👑 SISTEMA VIP ACTIVADO")
 
     bot.infinity_polling(
         skip_pending=True,
         timeout=30,
-        long_polling_timeout=30
+        long_polling_timeout=30,
+        allowed_updates=[
+            "message",
+            "callback_query",
+            "chat_member"
+        ]
     )
