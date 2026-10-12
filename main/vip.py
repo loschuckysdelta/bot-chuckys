@@ -1,4 +1,4 @@
-"""VIP Telegram: no SQLite; enlaces y membresías persistidos por API."""
+
 import logging
 import threading
 import time
