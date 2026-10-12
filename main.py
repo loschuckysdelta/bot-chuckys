@@ -15,7 +15,7 @@ from main.vip import register_vip
 # ============================================================
 
 # Coloca aquí tu nuevo token de BotFather
-TOKEN = "8849210272:AAEfhBFlsP-ll0qthfor-FQAa8wrTcHMjbc"
+TOKEN = "8849210272:AAFkQaOMyd6VpJTNtDZGCj9wXDEvRjPOAyQ"
 
 bot = telebot.TeleBot(
     TOKEN,
