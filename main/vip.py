@@ -1,162 +1,163 @@
-import os
-import time
-import sqlite3
+"""VIP Telegram: no SQLite; enlaces y membresías persistidos por API."""
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from urllib.parse import quote
+
 import requests
 from telebot import types
 
 CHAT_ID = -1004361223083
 ADMIN_IDS = {7219427873, 8635600472}
-API_BASE = os.getenv('VIP_API_URL', 'https://bot-apis-zkmk.vercel.app').rstrip('/')
-DB_PATH = os.getenv('VIP_LOCAL_DB', 'vip_links.sqlite3')
-# La API actual utiliza días enteros. 2 meses se representan como 60 días.
-PLANS = {'7': ('S/5 • 7 días', 7, False), '30': ('S/20 • 30 días', 30, False),
-         '60': ('S/35 • 2 meses (60 días)', 60, False),
-         'permanent': ('S/50 • Pago único', None, True)}
+API_BASE = "https://bot-apis-zkmk.vercel.app"
+PLANS = {
+    "7": ("S/5 • 7 días", 7, False),
+    "30": ("S/20 • 30 días", 30, False),
+    "60": ("S/35 • 2 meses (60 días)", 60, False),
+    "permanent": ("S/50 • Permanente", None, True),
+}
 log = logging.getLogger(__name__)
 
 
-def db():
-    conn = sqlite3.connect(DB_PATH, timeout=15)
-    conn.execute('CREATE TABLE IF NOT EXISTS links (link TEXT PRIMARY KEY, plan TEXT NOT NULL, used INTEGER DEFAULT 0)')
-    conn.execute('CREATE TABLE IF NOT EXISTS removals (user_id TEXT PRIMARY KEY, expires_at TEXT NOT NULL)')
-    conn.commit()
-    return conn
-
-
 def api(method, path, payload=None):
-    r = requests.request(method, API_BASE + path, json=payload, timeout=20)
-    r.raise_for_status()
-    data = r.json()
-    if not data.get('success', False):
-        raise ValueError(data.get('error', 'Respuesta inválida de la API'))
+    response = requests.request(method, API_BASE + path, json=payload, timeout=20)
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict) or data.get("success") is not True:
+        raise ValueError(f"Respuesta inesperada de API en {path}: {data}")
     return data
 
 
-def parse_date(value):
-    return datetime.fromisoformat(value.replace('Z', '+00:00'))
+def date_value(value):
+    if not isinstance(value, str):
+        raise ValueError("Fecha inválida")
+    result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if result.tzinfo is None:
+        result = result.replace(tzinfo=timezone.utc)
+    return result
 
 
 def register_vip(bot):
-    with db():
-        pass
-
-    @bot.message_handler(commands=['vip'])
-    def command_vip(message):
-        print(f'[VIP] /vip recibido de {message.from_user.id} en {message.chat.type}', flush=True)
-        if message.from_user.id not in ADMIN_IDS:
-            bot.reply_to(message, '⛔ No tienes permiso para usar /vip.')
-            return
-        if message.chat.type != 'private':
-            bot.reply_to(message, '🔒 Envíame /vip en el chat privado del bot.')
+    @bot.message_handler(commands=["vip"])
+    def vip_menu(message):
+        if message.from_user.id not in ADMIN_IDS or message.chat.type != "private":
             return
         keyboard = types.InlineKeyboardMarkup(row_width=1)
-        for code, (title, _, _) in PLANS.items():
-            keyboard.add(types.InlineKeyboardButton(title, callback_data='vipplan:' + code))
-        bot.send_message(message.chat.id, '👑 Elige una membresía VIP:', reply_markup=keyboard)
+        for code, (label, _, _) in PLANS.items():
+            keyboard.add(types.InlineKeyboardButton(label, callback_data=f"vipplan:{code}"))
+        bot.send_message(message.chat.id, "👑 <b>MEMBRESÍAS VIP</b>\nSelecciona un plan:", reply_markup=keyboard)
 
-    @bot.callback_query_handler(func=lambda c: bool(c.data and c.data.startswith('vipplan:')))
+    @bot.callback_query_handler(func=lambda call: bool(call.data and call.data.startswith("vipplan:")))
     def create_link(call):
-        if call.from_user.id not in ADMIN_IDS:
-            bot.answer_callback_query(call.id, 'Solo administradores', show_alert=True)
+        if call.from_user.id not in ADMIN_IDS or call.message.chat.type != "private":
+            bot.answer_callback_query(call.id, "Solo administradores", show_alert=True)
             return
-        code = call.data.partition(':')[2]
+        code = call.data.split(":", 1)[1]
         if code not in PLANS:
-            bot.answer_callback_query(call.id, 'Plan no válido', show_alert=True)
+            bot.answer_callback_query(call.id, "Plan inválido", show_alert=True)
             return
+        invite = None
         try:
-            invite = bot.create_chat_invite_link(CHAT_ID, name='VIP-' + code,
-                                                 expire_date=int(time.time()) + 86400,
-                                                 member_limit=1)
-            with db() as con:
-                con.execute('INSERT INTO links (link, plan) VALUES (?, ?)', (invite.invite_link, code))
-            bot.answer_callback_query(call.id, 'Enlace creado')
+            # Valida acceso antes de intentar crear el enlace.
+            bot.get_chat(CHAT_ID)
+            invite = bot.create_chat_invite_link(
+                CHAT_ID, name=f"VIP-{code}",
+                expire_date=int(time.time()) + 86400, member_limit=1
+            )
+            # El backend DEBE implementar este endpoint y almacenar el enlace.
+            api("POST", "/api/vip/links", {
+                "invite_link": invite.invite_link,
+                "plan": code,
+                "used": False,
+                "chat_id": CHAT_ID,
+            })
+            bot.answer_callback_query(call.id, "Enlace generado")
             bot.send_message(call.from_user.id,
-                             f'👑 {PLANS[code][0]}\n🔗 {invite.invite_link}\n'
-                             'Enlace para 1 ingreso; caduca en 24 horas si no se usa.')
-        except Exception:
-            log.exception('Error generando enlace VIP')
-            bot.answer_callback_query(call.id, 'Error creando enlace', show_alert=True)
+                f"👑 <b>{PLANS[code][0]}</b>\n"
+                f"🔗 {invite.invite_link}\n\n"
+                "Enlace de un uso, válido por 24 horas si no se utiliza.")
+        except Exception as error:
+            log.exception("No se pudo crear o registrar el enlace VIP")
+            if invite is not None:
+                try:
+                    bot.revoke_chat_invite_link(CHAT_ID, invite.invite_link)
+                except Exception:
+                    log.exception("No se pudo revocar el enlace no registrado")
+            description = str(error).lower()
+            if "chat not found" in description:
+                msg = "❌ Grupo VIP no encontrado. Comprueba el ID y que el bot esté dentro del grupo."
+            elif "not enough rights" in description or "not administrator" in description:
+                msg = "❌ El bot necesita permisos para crear enlaces de invitación."
+            elif isinstance(error, requests.HTTPError) and error.response is not None and error.response.status_code == 404:
+                msg = "❌ La API todavía no tiene /api/vip/links. Debes agregar ese endpoint en tu backend."
+            else:
+                msg = "❌ No se pudo generar el enlace. Revisa la consola y la conexión con la API."
+            try:
+                bot.answer_callback_query(call.id, "Operación fallida", show_alert=True)
+            except Exception:
+                pass
+            bot.send_message(call.from_user.id, msg)
 
-    @bot.chat_member_handler(func=lambda u: u.chat.id == CHAT_ID)
+    @bot.chat_member_handler(func=lambda update: update.chat.id == CHAT_ID)
     def on_join(update):
-        if update.old_chat_member.status in ('member', 'administrator', 'creator'):
+        before = update.old_chat_member.status
+        after = update.new_chat_member.status
+        if before in ("member", "administrator", "creator") or after not in ("member", "administrator"):
             return
-        if update.new_chat_member.status not in ('member', 'administrator'):
-            return
-        invite = getattr(update, 'invite_link', None)
+        invite = getattr(update, "invite_link", None)
         if not invite:
             return
         user = update.new_chat_member.user
         try:
-            with db() as con:
-                record = con.execute('SELECT plan, used FROM links WHERE link=?',
-                                     (invite.invite_link,)).fetchone()
-                if not record or record[1]:
-                    return
-                code = record[0]
-                _, days, permanent = PLANS[code]
-                # API real: POST /api/vip exige telegram_user_id y crea fecha al registrarse.
-                # No marcar el enlace usado si la API falla, para poder reintentar.
-                try:
-                    api('POST', '/api/vip', {'telegram_user_id': user.id,
-                                            'telegram_username': user.username or '',
-                                            'days': days, 'permanent': permanent})
-                except requests.HTTPError as exc:
-                    if exc.response is None or exc.response.status_code != 409:
-                        raise
-                    # Si ya existe, solo añadir días; nunca reducir membresía activa.
-                    api('PATCH', '/api/vip/' + str(user.id),
-                        {'days': days, 'permanent': permanent, 'operation': 'add'})
-                con.execute('UPDATE links SET used=1 WHERE link=?', (invite.invite_link,))
-            bot.send_message(user.id, '👑 Tu membresía VIP está activa.')
+            # Activación atómica: la API conoce el plan por el enlace guardado.
+            # Evita duplicar membresías si Telegram repite el evento.
+            api("POST", "/api/vip/activate", {
+                "inviteLink": invite.invite_link,
+                "telegramUserId": str(user.id),
+                "username": user.username or "",
+            })
+            try:
+                bot.send_message(user.id, "👑 Tu membresía VIP está activa.")
+            except Exception:
+                log.info("Usuario %s no inició chat privado con el bot", user.id)
         except Exception:
-            log.exception('No se pudo registrar al usuario %s', user.id)
+            log.exception("Error al registrar ingreso VIP de %s", user.id)
 
     def check_expired():
-        # Si la API no responde, NO expulsar a nadie.
-        result = api('GET', '/api/vip')
-        members = result.get('memberships', [])
-        now = datetime.now(timezone.utc)
-        for member in members:
+        data = api("GET", "/api/vip")
+        memberships = data.get("memberships")
+        if not isinstance(memberships, list):
+            raise ValueError("API GET /api/vip no devolvió memberships como lista")
+        for member in memberships:
             try:
-                uid = member.get('telegramUserId')
-                expiry = member.get('expiresAt')
-                if not uid or not expiry or member.get('permanent'):
+                uid = member.get("telegramUserId")
+                expiry = member.get("expiresAt")
+                if not uid or not expiry or member.get("permanent"):
                     continue
-                if parse_date(expiry) > now:
+                if date_value(expiry) > datetime.now(timezone.utc):
                     continue
-                with db() as con:
-                    last = con.execute('SELECT expires_at FROM removals WHERE user_id=?',
-                                       (str(uid),)).fetchone()
-                if last and last[0] == expiry:
+                # Comprobación fresca antes de expulsar: respeta renovaciones.
+                fresh = api("GET", "/api/vip/" + quote(str(uid), safe="")).get("membership")
+                if not isinstance(fresh, dict):
                     continue
-                # Reconsultar antes de expulsar: pudo haber una renovación reciente.
-                latest = api('GET', '/api/vip/' + quote(str(uid)))['membership']
-                latest_expiry = latest.get('expiresAt')
-                if latest.get('permanent') or not latest_expiry or parse_date(latest_expiry) > datetime.now(timezone.utc):
-                    continue
-                if latest_expiry != expiry:
+                fresh_expiry = fresh.get("expiresAt")
+                if (fresh.get("permanent") or not fresh_expiry or
+                        date_value(fresh_expiry) > datetime.now(timezone.utc) or
+                        fresh_expiry != expiry):
                     continue
                 bot.ban_chat_member(CHAT_ID, int(uid))
                 bot.unban_chat_member(CHAT_ID, int(uid), only_if_banned=True)
-                with db() as con:
-                    con.execute('INSERT OR REPLACE INTO removals(user_id, expires_at) VALUES (?, ?)',
-                                (str(uid), expiry))
-                log.info('VIP vencido retirado: %s', uid)
+                log.info("Membresía VIP vencida, usuario retirado: %s", uid)
             except Exception:
-                log.exception('Error verificando vencimiento VIP: %s', member.get('telegramUserId'))
+                log.exception("Error revisando vencimiento del usuario %s", member.get("telegramUserId"))
 
-    def loop():
+    def expiry_loop():
         while True:
             try:
                 check_expired()
             except Exception:
-                log.exception('Error consultando API VIP; sin expulsiones en este ciclo')
-            time.sleep(60)
+                log.exception("No se pudo revisar la API VIP; no se expulsó en este ciclo")
+            time.sleep(300)
 
-    threading.Thread(target=loop, name='vip-expiry', daemon=True).start()
-    print('[VIP] Comando /vip registrado correctamente', flush=True)
+    threading.Thread(target=expiry_loop, name="vip-expiry", daemon=True).start()
