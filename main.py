@@ -1,5 +1,4 @@
 
-import os
 import telebot
 
 from main.start import registrar_start
@@ -12,10 +11,11 @@ from main.vip import register_vip
 
 
 # ============================================================
-# CONFIGURACIÓN
+# CONFIGURACIÓN DEL BOT
 # ============================================================
 
-TOKEN = os.environ["8849210272:AAE84XFogP1KwSy3NkZR1OpAASanLxWtVr0"]
+# Coloca aquí tu nuevo token de BotFather
+TOKEN = "8849210272:AAEfhBFlsP-ll0qthfor-FQAa8wrTcHMjbc"
 
 bot = telebot.TeleBot(
     TOKEN,
@@ -28,7 +28,8 @@ bot = telebot.TeleBot(
 # ============================================================
 
 register_vip(bot)
-print("👑 MÓDULO VIP REGISTRADO")
+
+print("👑 SISTEMA VIP REGISTRADO")
 
 
 # ============================================================
@@ -49,16 +50,27 @@ registrar_reportes(bot)
 
 if __name__ == "__main__":
 
+    print("=" * 45)
     print("🤖 BOT LOS CHUCKYS INICIADO")
-    print("👑 COMANDO /vip DISPONIBLE")
+    print("👑 SISTEMA VIP ACTIVADO")
+    print("🌐 API: bot-apis-zkmk.vercel.app")
+    print("=" * 45)
 
-    bot.infinity_polling(
-        skip_pending=True,
-        timeout=30,
-        long_polling_timeout=30,
-        allowed_updates=[
-            "message",
-            "callback_query",
-            "chat_member"
-        ]
-    )
+    try:
+        bot.infinity_polling(
+            skip_pending=True,
+            timeout=30,
+            long_polling_timeout=30,
+            allowed_updates=[
+                "message",
+                "callback_query",
+                "chat_member"
+            ]
+        )
+
+    except KeyboardInterrupt:
+        print("🛑 BOT DETENIDO")
+
+    except Exception as error:
+        print(f"❌ ERROR DEL BOT: {error}")
+        raise
