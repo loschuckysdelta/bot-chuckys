@@ -1,4 +1,3 @@
-"""Módulo VIP para bot TeleBot existente. pip install pyTelegramBotAPI requests"""
 import os
 import time
 import sqlite3
@@ -47,7 +46,12 @@ def register_vip(bot):
 
     @bot.message_handler(commands=['vip'])
     def command_vip(message):
-        if message.from_user.id not in ADMIN_IDS or message.chat.type != 'private':
+        print(f'[VIP] /vip recibido de {message.from_user.id} en {message.chat.type}', flush=True)
+        if message.from_user.id not in ADMIN_IDS:
+            bot.reply_to(message, '⛔ No tienes permiso para usar /vip.')
+            return
+        if message.chat.type != 'private':
+            bot.reply_to(message, '🔒 Envíame /vip en el chat privado del bot.')
             return
         keyboard = types.InlineKeyboardMarkup(row_width=1)
         for code, (title, _, _) in PLANS.items():
@@ -155,3 +159,4 @@ def register_vip(bot):
             time.sleep(60)
 
     threading.Thread(target=loop, name='vip-expiry', daemon=True).start()
+    print('[VIP] Comando /vip registrado correctamente', flush=True)
