@@ -112,11 +112,18 @@ def register_vip(bot):
         try:
             # Activación atómica: la API conoce el plan por el enlace guardado.
             # Evita duplicar membresías si Telegram repite el evento.
-            api("POST", "/api/vip/activate", {
+            result = api("POST", "/api/vip/activate", {
                 "inviteLink": invite.invite_link,
                 "telegramUserId": str(user.id),
                 "username": user.username or "",
             })
+            # La membresía se registra primero; después se inutiliza el enlace.
+            # Aunque el usuario abandone el grupo, no podrá reutilizarlo.
+            try:
+                bot.revoke_chat_invite_link(CHAT_ID, invite.invite_link)
+                log.info("Enlace VIP de un solo ingreso revocado para %s", user.id)
+            except Exception:
+                log.exception("VIP activado para %s, pero no se pudo revocar el enlace", user.id)
             try:
                 bot.send_message(user.id, "👑 Tu membresía VIP está activa.")
             except Exception:
