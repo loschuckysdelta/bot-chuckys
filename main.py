@@ -1,5 +1,7 @@
 
+import os
 import telebot
+from telebot.apihelper import ApiTelegramException
 
 from main.start import registrar_start
 from main.botones import registrar_botones
@@ -8,47 +10,58 @@ from main.alerta import registrar_alerta
 from main.vaucher import registrar_vaucher
 from main.reportes import registrar_reportes
 from main.vip import register_vip
-
+from main.grupo_vip import registrar_planes_vip
+from main.verificar_privado import registrar_verificacion_privado
 
 # ============================================================
 # CONFIGURACIÓN DEL BOT
 # ============================================================
 
-# Coloca aquí tu nuevo token de BotFather
-TOKEN = "8849210272:AAFkQaOMyd6VpJTNtDZGCj9wXDEvRjPOAyQ"
+TOKEN = os.getenv(
+    "BOT_TOKEN",
+    "8849210272:AAExrOlfIk3B2UhfwOLnOU0FtJTNp3Z7PME"
+
+).strip()
+
+if not TOKEN or TOKEN == "PEGA_AQUI_TU_TOKEN_NUEVO":
+    print("❌ CONFIGURA TU NUEVO TOKEN DE BOTFATHER")
+    raise SystemExit(1)
 
 bot = telebot.TeleBot(
     TOKEN,
     parse_mode="HTML"
 )
 
-
-# ============================================================
-# REGISTRAR SISTEMA VIP PRIMERO
-# ============================================================
-
-register_vip(bot)
-
-print("👑 SISTEMA VIP REGISTRADO")
-
-
-# ============================================================
-# REGISTRAR MÓDULOS EXISTENTES
-# ============================================================
-
-registrar_start(bot)
-registrar_botones(bot)
-registrar_guardar(bot)
-registrar_alerta(bot)
-registrar_vaucher(bot)
-registrar_reportes(bot)
-
-
 # ============================================================
 # INICIAR BOT
 # ============================================================
 
 if __name__ == "__main__":
+
+    # Verificar token antes de registrar módulos
+    try:
+        info = bot.get_me()
+        print(f"✅ BOT AUTORIZADO: @{info.username}")
+
+    except ApiTelegramException as error:
+        print(f"❌ TOKEN RECHAZADO POR TELEGRAM: {error}")
+        raise SystemExit(1)
+
+    # Verificar acceso al chat privado antes de ejecutar comandos de grupos
+    registrar_verificacion_privado(bot)
+
+    # Registrar sistema VIP
+    register_vip(bot)
+    print("👑 SISTEMA VIP REGISTRADO")
+
+    # Registrar módulos existentes
+    registrar_start(bot)
+    registrar_botones(bot)
+    registrar_planes_vip(bot)
+    registrar_guardar(bot)
+    registrar_alerta(bot)
+    registrar_vaucher(bot)
+    registrar_reportes(bot)
 
     print("=" * 45)
     print("🤖 BOT LOS CHUCKYS INICIADO")

@@ -104,13 +104,11 @@ def registrar_botones(bot):
         except Exception:
             pass
 
-        bot.send_photo(
-            call.message.chat.id,
-            IMAGEN_MENU,
-            caption=(
-                "🏠 <b>MENÚ PRINCIPAL</b>\n\n"
-                "👇 Selecciona una opción:"
-            ),
-            parse_mode="HTML",
-            reply_markup=botonera_principal()
-        )
+        texto_menu = "🏠 <b>MENÚ PRINCIPAL</b>\n\n👇 Selecciona una opción:"
+        try:
+            bot.send_photo(call.message.chat.id, IMAGEN_MENU, caption=texto_menu,
+                           parse_mode="HTML", reply_markup=botonera_principal(), timeout=15)
+        except Exception as error:
+            print(f"⚠️ Error de imagen del menú: {error}")
+            bot.send_message(call.message.chat.id, texto_menu,
+                             parse_mode="HTML", reply_markup=botonera_principal())

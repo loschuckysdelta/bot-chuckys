@@ -5,6 +5,8 @@ import requests
 import json
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
+import threading
 from telebot import types
 
 # ========================================================
@@ -165,7 +167,7 @@ def consultar_dias_api(user_id):
         consultas ilimitadas
 
     days == 0:
-        plan gratuito de 3 consultas por día
+        plan gratuito de 2 consultas por día
     """
 
     headers = {
@@ -230,213 +232,87 @@ def consultar_dias_api(user_id):
 # 5. EVALUAR PERMISO
 # ========================================================
 
+# Dos consultas gratuitas al día POR PERSONA, compartidas entre privado y grupos.
+# Se almacenan en disco para que no se reinicien al volver a iniciar el bot.
+LIMITE_GRATUITO_DIARIO = 2
+ARCHIVO_USOS_DIARIOS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usos_diarios.json")
+BLOQUEO_USOS = threading.RLock()
+
+def _fecha_peru():
+    return datetime.now(ZoneInfo("America/Lima")).strftime("%Y-%m-%d")
+
+def _leer_usos():
+    try:
+        with open(ARCHIVO_USOS_DIARIOS, "r", encoding="utf-8") as archivo:
+            datos = json.load(archivo)
+        return datos if isinstance(datos, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as error:
+        print(f"⚠️ No se pudieron leer los usos diarios: {error}")
+        return {}
+
+def _guardar_usos(datos):
+    temporal = ARCHIVO_USOS_DIARIOS + ".tmp"
+    with open(temporal, "w", encoding="utf-8") as archivo:
+        json.dump(datos, archivo, ensure_ascii=False, indent=2)
+    os.replace(temporal, ARCHIVO_USOS_DIARIOS)
+
 def evaluar_permiso(chat_id, user_id):
+    # Se conserva la autorización previa de los grupos.
+    if chat_id < 0 and chat_id not in GRUPOS_AUTORIZADOS:
+        return False, None
 
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     ahora = time.time()
-
-    # ====================================================
-    # A. GRUPO
-    # ====================================================
-
     if chat_id < 0:
+        anti_spam = int(GRUPOS_AUTORIZADOS[chat_id].get("anti_spam", 5))
+        cooldown = COOLDOWN_GRUPOS.setdefault(chat_id, {})
+    else:
+        anti_spam = 5
+        cooldown = COOLDOWN_PRIVADO
 
-        if chat_id not in GRUPOS_AUTORIZADOS:
-            # Grupo no autorizado: ignorar silenciosamente.
-            return False, None
+    transcurrido = ahora - cooldown.get(user_id, 0)
+    if transcurrido < anti_spam:
+        espera = max(1, int(anti_spam - transcurrido + 0.999))
+        return False, f"⏳ Espera <b>{texto_antispam(espera)}</b> antes de usar otro comando."
 
-        datos_grupo = GRUPOS_AUTORIZADOS[chat_id]
-
-        limite_diario = int(
-            datos_grupo.get("limite_diario", 3)
-        )
-
-        anti_spam = int(
-            datos_grupo.get("anti_spam", 5)
-        )
-
-        # ------------------------------------------------
-        # CONTADOR DIARIO POR PERSONA
-        # ------------------------------------------------
-
-        usuarios_grupo = datos_grupo.setdefault(
-            "usuarios",
-            {}
-        )
-
-        clave_usuario = str(user_id)
-
-        registro_usuario = usuarios_grupo.get(
-            clave_usuario,
-            {
-                "fecha": fecha_hoy,
-                "usos": 0
-            }
-        )
-
-        if registro_usuario.get("fecha") != fecha_hoy:
-            registro_usuario = {
-                "fecha": fecha_hoy,
-                "usos": 0
-            }
-
-        # ------------------------------------------------
-        # ANTISPAM POR PERSONA
-        #
-        # Cada grupo tiene un diccionario y dentro de él
-        # cada Telegram user_id tiene su propio tiempo.
-        # ------------------------------------------------
-
-        cooldown_del_grupo = COOLDOWN_GRUPOS.setdefault(
-            chat_id,
-            {}
-        )
-
-        ultimo_uso = cooldown_del_grupo.get(
-            user_id,
-            0
-        )
-
-        tiempo_transcurrido = ahora - ultimo_uso
-
-        if tiempo_transcurrido < anti_spam:
-
-            tiempo_espera = max(
-                1,
-                int(anti_spam - tiempo_transcurrido)
-            )
-
-            return False, (
-                "⚠️ <b>AntiSpam personal activado</b>\n\n"
-                f"👤 Tu ID: <code>{user_id}</code>\n"
-                f"⏱ Tú debes esperar "
-                f"<b>{texto_antispam(tiempo_espera)}</b>.\n\n"
-                "✅ Las demás personas del grupo "
-                "pueden seguir consultando normalmente."
-            )
-
-        # ------------------------------------------------
-        # LÍMITE DIARIO SOLO DE ESTA PERSONA
-        # ------------------------------------------------
-
-        if registro_usuario["usos"] >= limite_diario:
-
-            usuarios_grupo[clave_usuario] = registro_usuario
-            guardar_grupos()
-
-            return False, (
-                "⚠️ <b>Tu límite diario fue alcanzado</b>\n\n"
-                f"👤 Tu ID: <code>{user_id}</code>\n"
-                f"📊 Usaste <b>{limite_diario}/"
-                f"{limite_diario}</b> consultas.\n\n"
-                "✅ Las demás personas del grupo "
-                "conservan sus propios límites."
-            )
-
-        # ------------------------------------------------
-        # CONSUMIR 1 CONSULTA SOLO A ESTA PERSONA
-        # ------------------------------------------------
-
-        registro_usuario["usos"] += 1
-        usuarios_grupo[clave_usuario] = registro_usuario
-
-        guardar_grupos()
-
-        # Inicia el AntiSpam SOLO para este user_id.
-        cooldown_del_grupo[user_id] = ahora
-
-        restantes_usuario = (
-            limite_diario - registro_usuario["usos"]
-        )
-
-        return True, (
-            "👥 <b>Grupo autorizado</b>\n"
-            f"👤 Usuario: <code>{user_id}</code>\n"
-            f"📊 Tus consultas: "
-            f"<b>{registro_usuario['usos']}/"
-            f"{limite_diario}</b>\n"
-            f"🔎 Te quedan: <b>{restantes_usuario}</b>\n"
-            f"⏱ Tu AntiSpam: "
-            f"<b>{texto_antispam(anti_spam)}</b>"
-        )
-
-    # ====================================================
-    # B. CHAT PRIVADO
-    # ====================================================
-
-    ultimo_uso = COOLDOWN_PRIVADO.get(
-        user_id,
-        0
-    )
-
-    tiempo_transcurrido = ahora - ultimo_uso
-
-    if tiempo_transcurrido < 5:
-
-        tiempo_espera = max(
-            1,
-            int(5 - tiempo_transcurrido)
-        )
-
-        return False, (
-            "⚠️ <b>AntiSpam Activado:</b> "
-            f"Espera {tiempo_espera}s antes "
-            "de enviar otro comando."
-        )
-
-    tiene_dias, cantidad_dias = consultar_dias_api(
-        user_id
-    )
-
+    # Los usuarios con días activos conservan las consultas ilimitadas.
+    tiene_dias, cantidad_dias = consultar_dias_api(user_id)
     if tiene_dias:
-
-        COOLDOWN_PRIVADO[user_id] = ahora
-
+        cooldown[user_id] = ahora
         return True, (
-            "🌟 <b>Plan con días activo</b>\n"
+            "🌟 <b>Plan activo</b>\n"
             f"📅 Días restantes: <b>{cantidad_dias}</b>\n"
-            "♾️ Consultas: <b>Ilimitadas</b>"
+            "♾️ Consultas ilimitadas"
         )
 
-    registro = USOS_USUARIOS_DIARIOS.get(
-        user_id,
-        {
-            "fecha": fecha_hoy,
-            "usos": 0
-        }
-    )
-
-    if registro["fecha"] != fecha_hoy:
-        registro = {
-            "fecha": fecha_hoy,
-            "usos": 0
-        }
-
-    if registro["usos"] >= 3:
-
-        USOS_USUARIOS_DIARIOS[user_id] = registro
-
-        return False, (
-            "⚠️ <b>Plan Gratuito agotado</b>\n\n"
-            "Ya utilizaste tus "
-            "<b>3 consultas gratuitas de hoy.</b>\n\n"
-            "📅 Vuelve mañana para obtener otras "
-            "3 consultas o adquiere días para tener "
-            "consultas ilimitadas."
-        )
-
-    registro["usos"] += 1
-    USOS_USUARIOS_DIARIOS[user_id] = registro
-
-    COOLDOWN_PRIVADO[user_id] = ahora
-
-    usos_restantes = 3 - registro["usos"]
-
+    # Un contador para todos los comandos del módulo y todos los chats.
+    with BLOQUEO_USOS:
+        hoy = _fecha_peru()
+        datos = _leer_usos()
+        # Purgar días anteriores para que el archivo no crezca indefinidamente.
+        datos = {clave: valor for clave, valor in datos.items()
+                 if isinstance(valor, dict) and valor.get("fecha") == hoy}
+        clave = str(user_id)
+        usados = int(datos.get(clave, {}).get("usos", 0))
+        if usados >= LIMITE_GRATUITO_DIARIO:
+            return False, (
+                "⚠️ <b>Alcanzaste tu límite diario.</b>\n\n"
+                f"📊 Usaste <b>{LIMITE_GRATUITO_DIARIO}/{LIMITE_GRATUITO_DIARIO}</b> consultas.\n"
+                "🔄 Se renueva a medianoche (hora de Perú)."
+            )
+        datos[clave] = {"fecha": hoy, "usos": usados + 1}
+        try:
+            _guardar_usos(datos)
+        except OSError as error:
+            print(f"❌ No se pudo guardar el contador diario: {error}")
+            return False, "⚠️ No se pudo registrar tu consulta. Intenta nuevamente."
+    cooldown[user_id] = ahora
+    restantes = LIMITE_GRATUITO_DIARIO - usados - 1
     return True, (
-        "🎁 <b>Plan Gratuito</b>\n"
-        f"🔎 Consulta: <b>{registro['usos']}/3</b>\n"
-        f"📊 Te quedan: "
-        f"<b>{usos_restantes}</b> consultas hoy"
+        "🎁 <b>Plan gratuito</b>\n"
+        f"📊 Consultas: <b>{usados + 1}/{LIMITE_GRATUITO_DIARIO}</b>\n"
+        f"🔎 Restantes hoy: <b>{restantes}</b>"
     )
 
 

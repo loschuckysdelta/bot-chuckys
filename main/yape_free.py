@@ -15,10 +15,14 @@ def ejecutar_yape_free(bot, call):
         "Obténlo completamente gratis acá abajo en la opción beta."
     )
 
-    bot.send_photo(
-        chat_id,
-        photo=imagen_url,
-        caption=caption_text,
-        parse_mode="HTML",
-        reply_markup=markup
-    )
+    try:
+        bot.send_photo(
+            chat_id,
+            photo=imagen_url,
+            caption=caption_text,
+            parse_mode="HTML",
+            reply_markup=markup
+        )
+    except Exception as error:
+        print(f"⚠️ No se pudo enviar imagen: {error}")
+        bot.send_message(chat_id, caption_text, parse_mode="HTML", reply_markup=markup)

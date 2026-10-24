@@ -266,11 +266,12 @@ def mostrar_menu(bot, chat_id, usuario):
             pass
 
         else:
-
-            print(
-                f"[TELEGRAM] Error mostrando menú: "
-                f"{e.error_code} - {e.description}"
-            )
+            print(f"[TELEGRAM] Error de imagen del menú: {e.error_code} - {e.description}")
+            try:
+                bot.send_message(chat_id, caption, parse_mode="HTML",
+                                 reply_markup=botonera_principal())
+            except Exception as send_error:
+                print(f"[TELEGRAM] No se pudo enviar menú de texto: {send_error}")
 
     except Exception as e:
 

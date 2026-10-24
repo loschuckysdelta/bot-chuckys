@@ -3,6 +3,7 @@ import html
 import threading
 import time
 from datetime import timedelta
+from urllib.parse import urlparse
 
 import requests
 from telebot import types
@@ -21,6 +22,8 @@ ADMIN_IDS = [
 # Ritmo base. Telegram puede pedir más espera mediante retry_after.
 PAUSA_ENTRE_ENVIOS = 0.06
 ACTUALIZAR_PROGRESO_CADA = 25
+INTERVALO_PROGRESO_SEGUNDOS = 3
+MAX_BOTONES = 20
 MAX_REINTENTOS = 3
 TIMEOUT_API = 20
 
@@ -113,50 +116,41 @@ def es_admin(user_id):
 # API DE USUARIOS
 # ============================================================
 def obtener_usuarios():
-    usuarios_totales = []
+    """Obtiene páginas, valida IDs y evita duplicados o ciclos de paginación."""
+    unicos = {}
     pagina = 1
-
     try:
-        while True:
-            respuesta = HTTP.get(
-                API_USUARIOS,
-                params={"page": pagina},
-                timeout=TIMEOUT_API,
-            )
+        while pagina <= 1000:
+            respuesta = HTTP.get(API_USUARIOS, params={"page": pagina}, timeout=TIMEOUT_API)
             respuesta.raise_for_status()
             data = respuesta.json()
-
-            usuarios = data.get("usuarios", [])
-            paginas = data.get("pages", 1)
-
+            if isinstance(data, list):
+                usuarios, paginas = data, 1
+            elif isinstance(data, dict):
+                usuarios = data.get("usuarios", data.get("users", []))
+                paginas = data.get("pages", data.get("totalPages", 1))
+            else:
+                raise ValueError("Formato de usuarios no reconocido")
+            if not isinstance(usuarios, list):
+                raise ValueError("La API no devolvió una lista de usuarios")
             for usuario in usuarios:
-                telegram_id = usuario.get("telegramId")
-                bloqueado = usuario.get("botBloqueado", False)
-
-                if telegram_id and not bloqueado:
-                    usuarios_totales.append(usuario)
-
-            print(
-                f"📥 Página {pagina}/{paginas}"
-                f" | usuarios acumulados: {len(usuarios_totales)}"
-            )
-
+                if not isinstance(usuario, dict) or usuario.get("botBloqueado", False):
+                    continue
+                try:
+                    telegram_id = int(usuario.get("telegramId"))
+                    if telegram_id > 0:
+                        unicos[telegram_id] = dict(usuario, telegramId=telegram_id)
+                except (ValueError, TypeError):
+                    continue
+            paginas = max(1, int(paginas))
+            print(f"📥 Página {pagina}/{paginas} | usuarios únicos: {len(unicos)}")
             if pagina >= paginas:
                 break
-
             pagina += 1
-
-        # Eliminar duplicados por telegramId
-        unicos = {}
-        for usuario in usuarios_totales:
-            telegram_id = usuario.get("telegramId")
-            if telegram_id:
-                unicos[str(telegram_id)] = usuario
-
         return list(unicos.values())
-
     except Exception as error:
         print(f"❌ Error obteniendo usuarios: {error}")
+        # No enviar una difusión parcial si una página falla.
         return []
 
 
@@ -249,45 +243,47 @@ def crear_markup_botones(botones):
 # FOTO O VIDEO + TEXTO + BOTONES
 # ============================================================
 def enviar_contenido(bot, chat_id, datos, usuario=None):
-    texto = datos.get("texto")
+    texto = datos.get("texto") or ""
     foto = datos.get("foto")
     video = datos.get("video")
-    botones = datos.get("botones", [])
-
+    markup = crear_markup_botones(datos.get("botones", []))
     if usuario:
         texto = preparar_texto(texto, usuario)
 
-    markup = crear_markup_botones(botones)
-
-    if foto:
-        return bot.send_photo(
-            chat_id,
-            foto,
-            caption=texto or None,
-            parse_mode="HTML",
-            reply_markup=markup,
-        )
-
-    if video:
-        return bot.send_video(
-            chat_id,
-            video,
-            caption=texto or None,
-            parse_mode="HTML",
-            reply_markup=markup,
-            supports_streaming=True,
-        )
-
+    # Telegram permite 1024 caracteres en captions y 4096 en mensajes.
+    # Si se supera el límite de caption, enviar el medio primero y el texto
+    # en un mensaje aparte (con los botones), sin perder el contenido.
+    if foto or video:
+        medio = foto or video
+        enviar = bot.send_photo if foto else bot.send_video
+        kwargs = {"parse_mode": "HTML"}
+        if video:
+            kwargs["supports_streaming"] = True
+        if len(texto) <= 1024:
+            return enviar(chat_id, medio, caption=texto or None, reply_markup=markup, **kwargs)
+        resultado = enviar(chat_id, medio, **kwargs)
+        enviar_texto_largo(bot, chat_id, texto, markup)
+        return resultado
     if texto:
-        return bot.send_message(
-            chat_id,
-            texto,
-            parse_mode="HTML",
-            reply_markup=markup,
-            disable_web_page_preview=False,
-        )
-
+        return enviar_texto_largo(bot, chat_id, texto, markup)
     return None
+
+
+def enviar_texto_largo(bot, chat_id, texto, markup=None):
+    if len(texto) <= 4096:
+        return bot.send_message(chat_id, texto, parse_mode="HTML", reply_markup=markup,
+                                disable_web_page_preview=False)
+    # Evitar truncar contenido o fragmentar etiquetas HTML al partir el texto.
+    # Telegram no admite HTML arbitrariamente largo en un mensaje.
+    raise ValueError("El texto supera los 4096 caracteres admitidos por Telegram. Divídelo en mensajes más cortos.")
+
+
+def url_boton_valida(url):
+    if url.startswith("tg://"):
+        return bool(urlparse(url).netloc)
+    if url.startswith(("https://", "http://")):
+        return bool(urlparse(url).netloc)
+    return False
 
 
 # ============================================================
@@ -439,96 +435,44 @@ def registrar_alerta(bot):
     # PANEL PRINCIPAL
     # ========================================================
     def mostrar_panel(chat_id, user_id, message_id=None):
+        if not es_admin(user_id):
+            return
         datos = alertas.get(user_id, nueva_alerta())
 
-        foto_estado = "✅ Ver" if datos.get("foto") else "👀 Ver"
-        video_estado = "✅ Ver" if datos.get("video") else "👀 Ver"
+        multimedia_estado = "✅ Ver" if (datos.get("foto") or datos.get("video")) else "👀 Ver"
         texto_estado = "✅ Ver" if datos.get("texto") else "👀 Ver"
         botones_estado = "✅ Ver" if datos.get("botones") else "👀 Ver"
         fijar_estado = "✅ SÍ" if datos.get("fijar") else "❌ NO"
 
-        markup = types.InlineKeyboardMarkup()
-
+        markup = types.InlineKeyboardMarkup(row_width=2)
         markup.row(
-            types.InlineKeyboardButton(
-                "🖼 Imagen",
-                callback_data="alerta_foto",
-            ),
-            types.InlineKeyboardButton(
-                foto_estado,
-                callback_data="alerta_ver_foto",
-            ),
+            types.InlineKeyboardButton("🖼 Medio multimedia", callback_data="alerta_multimedia"),
+            types.InlineKeyboardButton(multimedia_estado, callback_data="alerta_multimedia"),
         )
-
         markup.row(
-            types.InlineKeyboardButton(
-                "🎬 Video",
-                callback_data="alerta_video",
-            ),
-            types.InlineKeyboardButton(
-                video_estado,
-                callback_data="alerta_ver_video",
-            ),
+            types.InlineKeyboardButton("🔤 Texto", callback_data="alerta_texto"),
+            types.InlineKeyboardButton(texto_estado, callback_data="alerta_ver_texto"),
         )
-
         markup.row(
-            types.InlineKeyboardButton(
-                "🔤 Texto",
-                callback_data="alerta_texto",
-            ),
-            types.InlineKeyboardButton(
-                texto_estado,
-                callback_data="alerta_ver_texto",
-            ),
+            types.InlineKeyboardButton("⌨️ Botones", callback_data="alerta_botones"),
+            types.InlineKeyboardButton(botones_estado, callback_data="alerta_ver_botones"),
         )
-
         markup.row(
-            types.InlineKeyboardButton(
-                "⌨️ Botones",
-                callback_data="alerta_botones",
-            ),
-            types.InlineKeyboardButton(
-                botones_estado,
-                callback_data="alerta_ver_botones",
-            ),
+            types.InlineKeyboardButton("📌 Fijar", callback_data="alerta_fijar"),
+            types.InlineKeyboardButton(fijar_estado, callback_data="alerta_fijar"),
         )
-
         markup.row(
-            types.InlineKeyboardButton(
-                "📌 Fijar",
-                callback_data="alerta_fijar",
-            ),
-            types.InlineKeyboardButton(
-                fijar_estado,
-                callback_data="alerta_fijar",
-            ),
+            types.InlineKeyboardButton("👀 Vista previa completa", callback_data="alerta_preview"),
         )
-
         markup.row(
-            types.InlineKeyboardButton(
-                "👀 Vista previa completa",
-                callback_data="alerta_preview",
-            )
-        )
-
-        markup.row(
-            types.InlineKeyboardButton(
-                "❌ Cancelar",
-                callback_data="alerta_cancelar",
-            ),
-            types.InlineKeyboardButton(
-                "Siguiente ➡️",
-                callback_data="alerta_siguiente",
-            ),
+            types.InlineKeyboardButton("⬅️ Volver", callback_data="alerta_cancelar"),
+            types.InlineKeyboardButton("Siguiente ➡️", callback_data="alerta_siguiente"),
         )
 
         texto_panel = (
-            "📢 <b>Difusión · Los Chuckys</b>\n\n"
-            "Configura tu difusión con:\n"
-            "🖼 Imagen o 🎬 Video\n"
-            "🔤 Texto\n"
-            "⌨️ Botones\n\n"
-            "Luego usa la vista previa antes de enviar."
+            "📬 <b>Difusión · Guía</b>\n"
+            "<i>Envía un mensaje simultáneamente a todos los usuarios "
+            "que iniciaron el bot.</i>"
         )
 
         if message_id:
@@ -579,6 +523,42 @@ def registrar_alerta(bot):
         mostrar_panel(message.chat.id, user_id)
 
     # ========================================================
+    # MULTIMEDIA (IMAGEN O VIDEO)
+    # ========================================================
+    @bot.callback_query_handler(func=lambda call: call.data == "alerta_multimedia")
+    def alerta_multimedia(call):
+        user_id = call.from_user.id
+        if not es_admin(user_id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
+        datos = alertas.get(user_id)
+        if datos is None:
+            responder_callback(bot, call, "Usa /alerta para comenzar.", True)
+            return
+        responder_callback(bot, call)
+        bot.clear_step_handler_by_chat_id(call.message.chat.id)
+        foto_estado = "✅" if datos.get("foto") else "👀"
+        video_estado = "✅" if datos.get("video") else "👀"
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.row(
+            types.InlineKeyboardButton("🖼 Elegir imagen", callback_data="alerta_foto"),
+            types.InlineKeyboardButton(f"{foto_estado} Ver", callback_data="alerta_ver_foto"),
+        )
+        markup.row(
+            types.InlineKeyboardButton("🎬 Elegir video", callback_data="alerta_video"),
+            types.InlineKeyboardButton(f"{video_estado} Ver", callback_data="alerta_ver_video"),
+        )
+        markup.row(types.InlineKeyboardButton("⬅️ Volver", callback_data="alerta_regresar"))
+        editar_seguro(
+            bot,
+            "🖼 <b>Medio multimedia</b>\n\nElige una imagen o video para tu difusión.",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+
+    # ========================================================
     # FOTO / IMAGEN
     # ========================================================
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_foto")
@@ -613,6 +593,7 @@ def registrar_alerta(bot):
             parse_mode="HTML",
         )
 
+        bot.clear_step_handler_by_chat_id(call.message.chat.id)
         bot.register_next_step_handler_by_chat_id(
             call.message.chat.id,
             guardar_foto,
@@ -647,6 +628,8 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_ver_foto")
     def ver_foto(call):
+        if not es_admin(call.from_user.id):
+            return
         datos = alertas.get(call.from_user.id, {})
         foto = datos.get("foto")
 
@@ -664,6 +647,9 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_quitar_foto")
     def quitar_foto(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
 
         if user_id in alertas:
@@ -712,6 +698,7 @@ def registrar_alerta(bot):
             parse_mode="HTML",
         )
 
+        bot.clear_step_handler_by_chat_id(call.message.chat.id)
         bot.register_next_step_handler_by_chat_id(
             call.message.chat.id,
             guardar_video,
@@ -745,6 +732,8 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_ver_video")
     def ver_video(call):
+        if not es_admin(call.from_user.id):
+            return
         datos = alertas.get(call.from_user.id, {})
         video = datos.get("video")
 
@@ -762,6 +751,9 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_quitar_video")
     def quitar_video(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
 
         if user_id in alertas:
@@ -813,6 +805,7 @@ def registrar_alerta(bot):
             parse_mode="HTML",
         )
 
+        bot.clear_step_handler_by_chat_id(call.message.chat.id)
         bot.register_next_step_handler_by_chat_id(
             call.message.chat.id,
             guardar_texto,
@@ -831,6 +824,10 @@ def registrar_alerta(bot):
             )
             return
 
+        if len(message.text) > 4096:
+            bot.send_message(message.chat.id, "❌ El texto supera el límite de 4096 caracteres.")
+            mostrar_panel(message.chat.id, user_id)
+            return
         alertas[user_id]["texto"] = message.text
 
         bot.send_message(
@@ -842,6 +839,8 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_ver_texto")
     def ver_texto(call):
+        if not es_admin(call.from_user.id):
+            return
         datos = alertas.get(call.from_user.id, {})
         texto = datos.get("texto")
 
@@ -858,6 +857,9 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_quitar_texto")
     def quitar_texto(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
 
         if user_id in alertas:
@@ -911,6 +913,7 @@ def registrar_alerta(bot):
             reply_markup=markup,
         )
 
+        bot.clear_step_handler_by_chat_id(call.message.chat.id)
         bot.register_next_step_handler_by_chat_id(
             call.message.chat.id,
             guardar_botones,
@@ -936,10 +939,7 @@ def registrar_alerta(bot):
             texto_boton = texto_boton.strip()
             url = url.strip()
 
-            if (
-                texto_boton
-                and url.startswith(("http://", "https://", "tg://"))
-            ):
+            if texto_boton and len(texto_boton) <= 64 and url_boton_valida(url):
                 botones.append({
                     "texto": texto_boton,
                     "url": url,
@@ -955,17 +955,19 @@ def registrar_alerta(bot):
             )
             return
 
-        alertas[user_id]["botones"] = botones
+        alertas[user_id]["botones"] = botones[:MAX_BOTONES]
 
         bot.send_message(
             message.chat.id,
-            f"✅ <b>{len(botones)} botón(es) guardado(s).</b>",
+            f"✅ <b>{min(len(botones), MAX_BOTONES)} botón(es) guardado(s).</b>",
             parse_mode="HTML",
         )
         mostrar_panel(message.chat.id, user_id)
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_ver_botones")
     def ver_botones(call):
+        if not es_admin(call.from_user.id):
+            return
         datos = alertas.get(call.from_user.id, {})
         botones = datos.get("botones", [])
 
@@ -983,6 +985,9 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_quitar_botones")
     def quitar_botones(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
 
         if user_id in alertas:
@@ -1001,6 +1006,9 @@ def registrar_alerta(bot):
     # ========================================================
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_fijar")
     def alerta_fijar(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
 
         if user_id not in alertas:
@@ -1026,6 +1034,9 @@ def registrar_alerta(bot):
     # ========================================================
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_preview")
     def alerta_preview(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
         datos = alertas.get(user_id, {})
 
@@ -1071,6 +1082,9 @@ def registrar_alerta(bot):
     # ========================================================
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_siguiente")
     def alerta_siguiente(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
         datos = alertas.get(user_id, {})
 
@@ -1142,6 +1156,9 @@ def registrar_alerta(bot):
     # ========================================================
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_regresar")
     def alerta_regresar(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         bot.clear_step_handler_by_chat_id(call.message.chat.id)
         responder_callback(bot, call)
         mostrar_panel(
@@ -1152,6 +1169,9 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_cancelar")
     def alerta_cancelar(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
 
         alertas.pop(user_id, None)
@@ -1224,6 +1244,9 @@ def registrar_alerta(bot):
     # ========================================================
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_pausar")
     def alerta_pausar(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
         estado = difusiones.get(user_id)
 
@@ -1238,6 +1261,9 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_continuar")
     def alerta_continuar(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
         estado = difusiones.get(user_id)
 
@@ -1252,6 +1278,9 @@ def registrar_alerta(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data == "alerta_cancelar_envio")
     def alerta_cancelar_envio(call):
+        if not es_admin(call.from_user.id):
+            responder_callback(bot, call, "Sin permisos.", True)
+            return
         user_id = call.from_user.id
         estado = difusiones.get(user_id)
 
@@ -1346,7 +1375,9 @@ def registrar_alerta(bot):
                 if not esta_pausada:
                     break
 
-                editar_seguro(
+                if not estado.get("ultimo_panel_pausa") or time.monotonic() - estado["ultimo_panel_pausa"] >= INTERVALO_PROGRESO_SEGUNDOS:
+                    estado["ultimo_panel_pausa"] = time.monotonic()
+                    editar_seguro(
                     bot,
                     texto_progreso(
                         "⏸ <b>DIFUSIÓN EN PAUSA</b>",
