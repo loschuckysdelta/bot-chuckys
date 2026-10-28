@@ -2,11 +2,8 @@ import requests
 import telebot
 
 
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
 
-ID_GRUPO = -1004286061167
+ID_GRUPO = -1004497451670
 API_URL = "https://bot-apis-zkmk.vercel.app/api/contactos"
 
 
@@ -24,7 +21,7 @@ def ejecutar_grupo_free(bot, call):
     user_id = call.from_user.id
 
     # ========================================================
-    # 1. VERIFICAR SI YA ESTÁ DENTRO DEL GRUPO
+    # 1. VERIFICAR SI YA ESTÁ DENTRO DEL GRUPO API YA
     # ========================================================
 
     try:

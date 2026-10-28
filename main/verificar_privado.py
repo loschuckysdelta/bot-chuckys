@@ -1,8 +1,4 @@
-"""Control de uso de comandos en grupos: exige acceso al chat privado.
 
-Telegram no ofrece una lista de usuarios que bloquearon el bot. Esta
-comprobacion intenta una accion privada sin enviar mensajes nuevos.
-"""
 import time
 from threading import Lock
 

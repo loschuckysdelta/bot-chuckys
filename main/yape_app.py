@@ -8,7 +8,7 @@ def ejecutar_yape_app(bot, call):
     markup = InlineKeyboardMarkup()
     boton_descarga = InlineKeyboardButton(
         text="📲 Descargar Yape APK Gratis", 
-        url="https://ypfk-plus.vercel.app/"
+        url="https://ypfkplus.com/"
     )
     markup.add(boton_descarga)
 
@@ -23,7 +23,7 @@ def ejecutar_yape_app(bot, call):
                 "pagar servicios y realizar recargas de forma 100% segura.\n\n"
                 "👉 Haz clic en el botón de abajo para ir a la descarga oficial:"
             ),
-            parse_mode="HTML",
+            parse_mode="HTML", 
             reply_markup=markup
         )
     except Exception as error:
