@@ -5,6 +5,7 @@ from telebot.apihelper import ApiTelegramException
 
 from main.start import registrar_start
 from main.botones import registrar_botones
+from main.grupo_free import registrar_canje_free
 from main.guardar import registrar_guardar
 from main.alerta import registrar_alerta
 from main.vaucher import registrar_vaucher
@@ -19,7 +20,7 @@ from main.verificar_privado import registrar_verificacion_privado
 
 TOKEN = os.getenv(
     "BOT_TOKEN",
-    "8849210272:AAExrOlfIk3B2UhfwOLnOU0FtJTNp3Z7PME"
+    "9147624464:AAFCLBMMH0ZK0qA_Q9LWcc2hfW4A3Oe6S_Q"
 
 ).strip()
 
@@ -57,6 +58,7 @@ if __name__ == "__main__":
     # Registrar módulos existentes
     registrar_start(bot)
     registrar_botones(bot)
+    registrar_canje_free(bot)  # Activar botón CANJEAR MI KEY
     registrar_planes_vip(bot)
     registrar_guardar(bot)
     registrar_alerta(bot)
