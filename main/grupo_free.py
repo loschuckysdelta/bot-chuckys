@@ -7,7 +7,7 @@ from unicodedata import normalize, combining
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-ID_GRUPO = -1004497451670
+ID_GRUPO = -1004350121410
 WEB_KEYS = "https://loschuckys.com/key"
 API_CANJEAR = "https://bot-apis-zkmk.vercel.app/api/keys/canjear"
 API_CONTACTOS = "https://bot-apis-zkmk.vercel.app/api/contactos"
