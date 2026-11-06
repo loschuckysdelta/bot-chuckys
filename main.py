@@ -20,7 +20,7 @@ from main.verificar_privado import registrar_verificacion_privado
 
 TOKEN = os.getenv(
     "BOT_TOKEN",
-    "9147624464:AAFCLBMMH0ZK0qA_Q9LWcc2hfW4A3Oe6S_Q"
+    "8849210272:AAExrOlfIk3B2UhfwOLnOU0FtJTNp3Z7PME"
 
 ).strip()
 
