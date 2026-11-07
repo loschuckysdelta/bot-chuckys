@@ -247,6 +247,11 @@ def _revisar_pendiente(bot, uid, iniciado):
             except Exception:
                 pass
         return
+    # Nunca se entrega un enlace sin haber registrado antes el número.
+    if not contacto_registrado(uid):
+        if _reclamar(uid):
+            _finalizar(uid, "sin_contacto")
+        return
     if not _estado_web(uid):
         return
     if _reclamar(uid):
@@ -325,9 +330,9 @@ def mostrar_menu_verificacion(bot, usuario):
     bot.send_message(
         uid,
         "👥 GRUPO FREE\n\n"
-        "1️⃣ Pulsa ABRIR VERIFICACIÓN.\n"
-        "2️⃣ En la página, toca VERIFICAR MI CUENTA.\n"
-        "3️⃣ Cuando la API confirme tu estado, recibirás aquí automáticamente el enlace del grupo.\n\n"
+        "✅ PASO 1/3: Tu número de Telegram ya está registrado.\n"
+        "2️⃣ Abre la página y toca VERIFICAR MI CUENTA.\n"
+        "3️⃣ Tras la confirmación de la API, recibirás aquí el enlace del grupo.\n\n"
         "⏳ Este aviso queda a la espera hasta 10 minutos.",
         reply_markup=menu,
     )
@@ -355,8 +360,10 @@ def _solicitar_contacto(bot, usuario):
     bot.clear_step_handler_by_chat_id(uid)
     msg = bot.send_message(
         uid,
-        "👥 GRUPO FREE\n\nPara registrarte, comparte tu propio contacto de Telegram. "
-        "Los datos se enviarán a nuestra API para gestionar el acceso.",
+        "👥 GRUPO FREE | PASO 1/3\n\n"
+        "Primero comparte tu propio número usando el botón de Telegram. "
+        "Se guardará en nuestra API de contactos para gestionar el acceso. "
+        "Después podrás abrir la página de verificación.",
         reply_markup=teclado,
     )
     bot.register_next_step_handler(msg, lambda m: _registrar_contacto(bot, m, usuario))
@@ -391,7 +398,7 @@ def _registrar_contacto(bot, message, usuario_original):
         bot.send_message(uid, "❌ No se pudo registrar el contacto. Pulsa GRUPO FREE y reintenta.")
         return
     _guardar_contacto(uid)
-    bot.send_message(uid, "✅ Contacto registrado correctamente.")
+    bot.send_message(uid, "✅ PASO 1 COMPLETADO: Número registrado correctamente.\n\nAhora continúa con la verificación de la página.")
     mostrar_menu_verificacion(bot, usuario)
 
 
