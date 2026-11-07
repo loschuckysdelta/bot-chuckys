@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 import requests
 import telebot
 
-ID_GRUPO = -1004497451670
+ID_GRUPO = -1004350121410
 WEB_VERIFICACION = "https://loschuckys.com/key.html"
 API_VERIFICAR = "https://bot-apis-zkmk.vercel.app/api/verificar"
 API_USUARIOS = "https://bot-apis-zkmk.vercel.app/api/users"
