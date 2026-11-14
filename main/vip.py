@@ -1,4 +1,3 @@
-
 import logging
 import html
 import threading
@@ -19,6 +18,7 @@ PLANS = {
     "60": ("S/35 • 2 meses (60 días)", 60, False),
     "permanent": ("S/50 • Pago único (sin vencimiento)", None, True),
 }
+
 log = logging.getLogger(__name__)
 _EXPIRY_WORKERS = set()
 _WORKERS_LOCK = threading.Lock()
@@ -37,14 +37,17 @@ def is_vip_admin(message):
     return message.chat.type == "private" and message.from_user and message.from_user.id in ADMIN_IDS
 
 
-
 def api(method, path, payload=None):
-    response = requests.request(method, API_BASE + path, json=payload, timeout=20)
-    response.raise_for_status()
-    data = response.json()
-    if not isinstance(data, dict) or data.get("success") is not True:
-        raise ValueError(f"Respuesta inesperada de API en {path}: {data}")
-    return data
+    try:
+        response = requests.request(method, API_BASE + path, json=payload, timeout=20)
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or data.get("success") is not True:
+            raise ValueError(f"Respuesta inesperada de API en {path}: {data}")
+        return data
+    except requests.RequestException as e:
+        log.error("Error de conexión con la API en %s: %s", path, e)
+        raise
 
 
 def date_value(value):
@@ -102,8 +105,6 @@ def register_vip(bot):
         enviar_lista(message.chat.id, 0)
 
     def leer_miembros():
-        # Contrato esperado de la API: {"success":true,"memberships":[{...}]}.
-        # No se inventan usuarios ni vencimientos si el backend devuelve otro formato.
         members = api("GET", "/api/vip").get("memberships")
         if not isinstance(members, list):
             raise ValueError("La API no devolvió una lista en 'memberships'")
@@ -188,44 +189,55 @@ def register_vip(bot):
             enviar_lista(call.message.chat.id, pagina, call.message.message_id)
             return
         if len(parts) != 3 or not parts[1].isdecimal() or not parts[2].isdigit():
-            bot.send_message(call.message.chat.id, "⚠️ Acción inválida.")
+            bot.answer_callback_query(call.id, "⚠️ Acción inválida.", show_alert=True)
             return
         uid, pagina = parts[1], int(parts[2])
         if parts[0] == "vipdetail":
             try:
                 member = next((m for m in leer_miembros() if id_miembro(m) == uid), None)
                 if member is None:
-                    bot.send_message(call.message.chat.id, "⚠️ Usuario no encontrado en /api/vip.")
+                    bot.answer_callback_query(call.id, "⚠️ Usuario no encontrado en /api/vip.", show_alert=True)
                     return
                 keyboard = types.InlineKeyboardMarkup()
                 keyboard.add(types.InlineKeyboardButton("🚫 Retirar del grupo", callback_data=f"vipremove:{uid}:{pagina}"))
                 keyboard.add(types.InlineKeyboardButton("⬅️ Volver a miembros", callback_data=f"viplist:{pagina}"))
-                bot.send_message(call.message.chat.id,
+                bot.edit_message_text(
                     "👑 <b>MEMBRESÍA VIP</b>\n\n" + format_member(member) +
-                    "\n" + dias_restantes(member), reply_markup=keyboard, parse_mode="HTML")
+                    "\n" + dias_restantes(member),
+                    call.message.chat.id,
+                    call.message.message_id,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
             except Exception:
                 log.exception("No se pudo consultar miembro VIP %s", uid)
-                bot.send_message(call.message.chat.id, "⚠️ Error consultando la membresía.")
+                bot.answer_callback_query(call.id, "⚠️ Error consultando la membresía.", show_alert=True)
         elif parts[0] == "vipremove":
             keyboard = types.InlineKeyboardMarkup()
             keyboard.add(types.InlineKeyboardButton("✅ Sí, retirar", callback_data=f"vipconfirm:{uid}:{pagina}"))
             keyboard.add(types.InlineKeyboardButton("❌ Cancelar", callback_data=f"viplist:{pagina}"))
-            bot.send_message(call.message.chat.id,
-                f"⚠️ ¿Retirar del grupo VIP al usuario <code>{uid}</code>?\nEsta acción no se puede deshacer automáticamente.",
-                reply_markup=keyboard, parse_mode="HTML")
+            try:
+                bot.edit_message_text(
+                    f"⚠️ ¿Retirar del grupo VIP al usuario <code>{uid}</code>?\nEsta acción no se puede deshacer automáticamente.",
+                    call.message.chat.id,
+                    call.message.message_id,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
         elif parts[0] == "vipconfirm":
             if int(uid) in ADMIN_IDS:
-                bot.send_message(call.message.chat.id, "⛔ No se puede retirar a un administrador configurado.")
+                bot.answer_callback_query(call.id, "⛔ No se puede retirar a un administrador configurado.", show_alert=True)
                 return
             try:
-                # Telegram: retirar de la sala. No se borra de la API sin contrato DELETE verificado.
                 bot.ban_chat_member(CHAT_ID, int(uid))
                 bot.unban_chat_member(CHAT_ID, int(uid), only_if_banned=True)
-                bot.send_message(call.message.chat.id,
-                    f"✅ Usuario {uid} retirado del grupo.\n⚠️ Su registro sigue en la API; para cancelar sus días debes implementar el endpoint correspondiente en tu backend.")
+                bot.answer_callback_query(call.id, f"✅ Usuario {uid} retirado del grupo.", show_alert=True)
+                enviar_lista(call.message.chat.id, pagina, call.message.message_id)
             except Exception:
                 log.exception("Fallo al retirar usuario VIP %s", uid)
-                bot.send_message(call.message.chat.id, "❌ No se pudo retirar al usuario. Verifica permisos de expulsión del bot.")
+                bot.answer_callback_query(call.id, "❌ No se pudo retirar al usuario. Verifica permisos.", show_alert=True)
 
     @bot.message_handler(commands=["vip_estado"])
     def vip_estado(message):
@@ -282,33 +294,59 @@ def register_vip(bot):
             return
         bot.answer_callback_query(call.id)
         action = call.data.split(":", 1)[1]
+        
         if action == "generar":
             kb = types.InlineKeyboardMarkup(row_width=2)
             for code, (label, _, _) in PLANS.items():
                 kb.add(types.InlineKeyboardButton(label, callback_data=f"vipplan:{code}"))
             kb.add(types.InlineKeyboardButton("⬅️ Volver al panel", callback_data="vipadmin:volver"))
-            bot.send_message(call.message.chat.id,
-                "🔗 <b>GENERAR ENLACE VIP</b>\n\nElige el plan. Se creará un enlace de un solo uso, válido 24 horas.\nLos días del plan se cuentan desde la activación registrada en la API.",
-                reply_markup=kb, parse_mode="HTML")
+            
+            text_generar = (
+                "🔗 <b>GENERAR ENLACE VIP</b>\n\n"
+                "Elige el plan. Se creará un enlace de un solo uso, válido 24 horas.\n"
+                "Los días del plan se cuentan desde la activación registrada en la API."
+            )
+            try:
+                bot.edit_message_caption(text_generar, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                try:
+                    bot.edit_message_text(text_generar, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
+                except Exception:
+                    pass
+                
         elif action == "volver":
             kb = types.InlineKeyboardMarkup(row_width=2)
             kb.add(types.InlineKeyboardButton("🔗 Generar enlace VIP", callback_data="vipadmin:generar"))
             kb.add(types.InlineKeyboardButton("👥 Miembros VIP", callback_data="viplist:0"))
             kb.add(types.InlineKeyboardButton("📊 Estado VIP", callback_data="vipadmin:estado"))
             kb.add(types.InlineKeyboardButton("ℹ️ Ayuda", callback_data="vipadmin:ayuda"))
-            bot.send_photo(call.message.chat.id, VIP_IMAGE,
-                caption="👑 <b>LOSCHUCKYS | PANEL VIP</b>\nSelecciona una opción:",
-                reply_markup=kb, parse_mode="HTML")
+            
+            panel_text = "👑 <b>LOSCHUCKYS | PANEL VIP</b>\nSelecciona una opción:"
+            try:
+                bot.edit_message_caption(panel_text, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                try:
+                    bot.edit_message_text(panel_text, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
+                except Exception:
+                    pass
+                
         elif action == "estado":
             send_status_callback(call)
         elif action == "ayuda":
-            bot.send_message(call.message.chat.id,
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Volver al panel", callback_data="vipadmin:volver"))
+            ayuda_text = (
                 "ℹ️ <b>AYUDA VIP</b>\n\n"
                 "• /vip — generar enlaces por plan\n"
                 "• /vip_estado — resumen de membresías\n"
                 "• /vip_lista — lista, días restantes y retirar del grupo\n"
                 "• /vip_usuario ID — consultar vencimiento\n\n"
-                "⚠️ Los endpoints /api/vip deben existir en tu API; de lo contrario, no se pueden activar ni consultar planes.", parse_mode="HTML")
+                "⚠️ Los endpoints /api/vip deben existir en tu API."
+            )
+            try:
+                bot.edit_message_text(ayuda_text, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                pass
 
     def send_status_callback(call):
         try:
@@ -324,10 +362,14 @@ def register_vip(bot):
                         active += date_value(m["expiresAt"]) > now
                     except (ValueError, TypeError, OverflowError):
                         pass
-            bot.send_message(call.message.chat.id, f"📊 <b>VIP</b>\n✅ Vigentes: {active}\n♾️ Permanentes: {permanent}\nConsulta detalles con /vip_estado", parse_mode="HTML")
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Volver al panel", callback_data="vipadmin:volver"))
+            
+            status_text = f"📊 <b>ESTADO VIP</b>\n\n✅ Vigentes: {active}\n♾️ Permanentes: {permanent}"
+            bot.edit_message_text(status_text, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
         except Exception:
             log.exception("Error resumen VIP")
-            bot.send_message(call.message.chat.id, "⚠️ No se pudo cargar el estado VIP. Revisa tu API.")
+            bot.answer_callback_query(call.id, "⚠️ No se pudo cargar el estado VIP.", show_alert=True)
 
     @bot.callback_query_handler(func=lambda call: bool(call.data and call.data.startswith("vipplan:")))
     def create_link(call):
@@ -338,49 +380,78 @@ def register_vip(bot):
         if code not in PLANS:
             bot.answer_callback_query(call.id, "Plan inválido", show_alert=True)
             return
+
+        try:
+            bot.answer_callback_query(call.id, "⏳ Generando enlace...")
+        except Exception:
+            pass
+
         invite = None
         try:
-            # Valida acceso antes de intentar crear el enlace.
-            bot.get_chat(CHAT_ID)
+            # 1. Crear enlace de invitación en Telegram
             invite = bot.create_chat_invite_link(
                 CHAT_ID, name=f"VIP-{code}",
                 expire_date=int(time.time()) + 86400, member_limit=1
             )
-            # El backend DEBE guardar el plan y contar los días al ingresar, no al crear el enlace.
+            
+            # 2. Registrar el enlace en la API de Vercel
             api("POST", "/api/vip/links", {
                 "invite_link": invite.invite_link,
                 "plan": code,
                 "used": False,
                 "chat_id": CHAT_ID,
             })
-            bot.answer_callback_query(call.id, "Enlace generado")
-            bot.send_message(call.from_user.id,
-                f"👑 <b>{PLANS[code][0]}</b>\n"
-                f"🔗 {html.escape(invite.invite_link)}\n\n"
+            
+            bot.answer_callback_query(call.id, "¡Enlace generado!")
+            
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Volver al panel", callback_data="vipadmin:volver"))
+            
+            result_text = (
+                f"👑 <b>{PLANS[code][0]}</b>\n\n"
+                f"🔗 <code>{html.escape(invite.invite_link)}</code>\n\n"
                 "✅ Enlace de una sola entrada.\n"
                 "⏳ Válido por 24 horas (si no se utiliza).\n"
-                "📆 Los días del plan comienzan tras activar el ingreso en la API.", parse_mode="HTML")
+                "📆 Los días del plan comienzan tras activar el ingreso en la API."
+            )
+            
+            # 3. Como el mensaje original tiene foto, usamos edit_message_caption de manera segura
+            try:
+                bot.edit_message_caption(result_text, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                try:
+                    bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
+                except Exception:
+                    bot.send_message(call.message.chat.id, result_text, reply_markup=kb, parse_mode="HTML")
+            
         except Exception as error:
             log.exception("No se pudo crear o registrar el enlace VIP")
             if invite is not None:
                 try:
                     bot.revoke_chat_invite_link(CHAT_ID, invite.invite_link)
                 except Exception:
-                    log.exception("No se pudo revocar el enlace no registrado")
+                    pass
+            
             description = str(error).lower()
-            if "chat not found" in description:
-                msg = "❌ Grupo VIP no encontrado. Comprueba el ID y que el bot esté dentro del grupo."
+            if "chat not found" in description or "peer_id_invalid" in description:
+                msg = "❌ <b>Error:</b> Grupo VIP no encontrado.\nVerifica que el <code>CHAT_ID</code> sea correcto y que el bot sea administrador en el grupo."
             elif "not enough rights" in description or "not administrator" in description:
-                msg = "❌ El bot necesita permisos para crear enlaces de invitación."
+                msg = "❌ <b>Error:</b> El bot necesita permisos de administrador en el grupo para crear enlaces de invitación."
             elif isinstance(error, requests.HTTPError) and error.response is not None and error.response.status_code == 404:
-                msg = "❌ La API todavía no tiene /api/vip/links. Debes agregar ese endpoint en tu backend."
+                msg = "❌ <b>Error:</b> La API en Vercel no tiene configurado el endpoint <code>/api/vip/links</code>."
             else:
-                msg = "❌ No se pudo generar el enlace. Revisa la consola y la conexión con la API."
+                msg = f"❌ <b>No se pudo generar el enlace.</b>\nDetalle: <code>{html.escape(str(error))}</code>"
+            
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Volver al panel", callback_data="vipadmin:volver"))
+            
             try:
-                bot.answer_callback_query(call.id, "Operación fallida", show_alert=True)
+                bot.edit_message_caption(msg, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
             except Exception:
-                pass
-            bot.send_message(call.from_user.id, msg)
+                try:
+                    bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=kb, parse_mode="HTML")
+                except Exception:
+                    bot.send_message(call.message.chat.id, msg, reply_markup=kb, parse_mode="HTML")
 
     @bot.chat_member_handler(func=lambda update: update.chat.id == CHAT_ID)
     def on_join(update):
@@ -393,22 +464,16 @@ def register_vip(bot):
             return
         user = update.new_chat_member.user
         try:
-            # Activación atómica: la API conoce el plan por el enlace guardado.
-            # Evita duplicar membresías si Telegram repite el evento.
             result = api("POST", "/api/vip/activate", {
                 "inviteLink": invite.invite_link,
                 "telegramUserId": str(user.id),
                 "username": user.username or "",
             })
-            # La membresía se registra primero; después se inutiliza el enlace.
-            # Aunque el usuario abandone el grupo, no podrá reutilizarlo.
             try:
                 bot.revoke_chat_invite_link(CHAT_ID, invite.invite_link)
                 log.info("Enlace VIP de un solo ingreso revocado para %s", user.id)
             except Exception:
                 log.exception("VIP activado para %s, pero no se pudo revocar el enlace", user.id)
-            # El backend confirma la duración y fecha al activar el enlace.
-            # No confundir las 24 horas del enlace con los días de membresía.
             membership = result.get("membership")
             try:
                 bot.send_message(
@@ -436,7 +501,6 @@ def register_vip(bot):
                     continue
                 if date_value(expiry) > datetime.now(timezone.utc):
                     continue
-                # Comprobación fresca antes de expulsar: respeta renovaciones.
                 fresh = api("GET", "/api/vip/" + quote(str(uid), safe="")).get("membership")
                 if not isinstance(fresh, dict):
                     continue
@@ -459,7 +523,6 @@ def register_vip(bot):
                 log.exception("No se pudo revisar la API VIP; no se expulsó en este ciclo")
             time.sleep(300)
 
-    # Evita múltiples hilos comprobando y expulsando usuarios si register_vip se repite.
     with _WORKERS_LOCK:
         bot_key = id(bot)
         if bot_key not in _EXPIRY_WORKERS:
