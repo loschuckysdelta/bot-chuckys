@@ -11,7 +11,7 @@ from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 BASE_URL = "https://bot-apis-zkmk.vercel.app"
 
 # ID de tu canal
-CANAL_ID = -1003691254516
+CANAL_ID = -1003958891359
 
 # IMPORTANTE:
 # Cambia esto por el enlace REAL de tu canal.
