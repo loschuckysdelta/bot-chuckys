@@ -1,3 +1,4 @@
+import html
 import requests
 
 from telebot.apihelper import ApiTelegramException
@@ -13,14 +14,11 @@ BASE_URL = "https://bot-apis-zkmk.vercel.app"
 # ID de tu canal
 CANAL_ID = -1003958891359
 
-# IMPORTANTE:
-# Cambia esto por el enlace REAL de tu canal.
-# Ejemplo:
-# CANAL_URL = "https://t.me/LosChuckys"
-#
-# Si el canal es privado, coloca el enlace de invitación:
-# CANAL_URL = "https://t.me/+xxxxxxxxxxxx"
+# Enlace de tu canal (público o de invitación privado)
 CANAL_URL = "https://t.me/loschuckys_pe"
+
+# URL directa de imagen para el menú principal
+URL_IMAGEN_MENU = "https://i.postimg.cc/Cxgrn1NW/image.png"
 
 
 # ============================================================
@@ -29,36 +27,19 @@ CANAL_URL = "https://t.me/loschuckys_pe"
 
 def esta_en_canal(bot, user_id):
     try:
-
-        miembro = bot.get_chat_member(
-            CANAL_ID,
-            user_id
-        )
-
-        # Estados que SÍ tienen acceso
-        estados_permitidos = [
-            "creator",
-            "administrator",
-            "member"
-        ]
-
+        miembro = bot.get_chat_member(CANAL_ID, user_id)
+        estados_permitidos = {"creator", "administrator", "member"}
         return miembro.status in estados_permitidos
 
     except ApiTelegramException as e:
-
         print(
             f"[CANAL] Error verificando usuario {user_id}: "
             f"{e.error_code} - {e.description}"
         )
-
         return False
 
     except Exception as e:
-
-        print(
-            f"[CANAL] Error inesperado: {e}"
-        )
-
+        print(f"[CANAL] Error inesperado verificando usuario {user_id}: {e}")
         return False
 
 
@@ -91,7 +72,6 @@ def botonera_unirse():
 # ============================================================
 
 def mensaje_unirse(bot, chat_id):
-
     texto = (
         "🚨 <b>ACCESO RESTRINGIDO</b>\n\n"
         "Para utilizar este bot debes pertenecer "
@@ -105,19 +85,17 @@ def mensaje_unirse(bot, chat_id):
     )
 
     try:
-
         bot.send_message(
             chat_id,
             texto,
             parse_mode="HTML",
             reply_markup=botonera_unirse()
         )
-
-    except ApiTelegramException:
-        pass
-
-    except Exception:
-        pass
+    except ApiTelegramException as e:
+        if e.error_code != 403:
+            print(f"[TELEGRAM] Error enviando mensaje de canal: {e.error_code} - {e.description}")
+    except Exception as e:
+        print(f"[BOT] Error enviando mensaje de canal: {e}")
 
 
 # ============================================================
@@ -125,7 +103,6 @@ def mensaje_unirse(bot, chat_id):
 # ============================================================
 
 def botonera_principal():
-
     teclado = InlineKeyboardMarkup(row_width=2)
 
     # FILA 1
@@ -166,13 +143,14 @@ def botonera_principal():
 
     return teclado
 
+
 # ============================================================
 # REGISTRAR / ACTUALIZAR USUARIO
 # ============================================================
 
-def registrar_usuario_api(message):
-
-    usuario = message.from_user
+def registrar_usuario_api(usuario):
+    if not usuario:
+        return None
 
     datos = {
         "telegramId": usuario.id,
@@ -181,29 +159,26 @@ def registrar_usuario_api(message):
     }
 
     try:
-
         respuesta = requests.post(
             f"{BASE_URL}/api/users",
             json=datos,
             timeout=10
         )
 
+        if not respuesta.ok:
+            print(
+                f"[API] Respuesta no exitosa ({respuesta.status_code}) "
+                f"para usuario {usuario.id}: {respuesta.text}"
+            )
+
         return respuesta
 
     except requests.RequestException as e:
-
-        print(
-            f"[API] Error registrando usuario: {e}"
-        )
-
+        print(f"[API] Error registrando usuario {usuario.id}: {e}")
         return None
 
     except Exception as e:
-
-        print(
-            f"[API] Error inesperado: {e}"
-        )
-
+        print(f"[API] Error inesperado registrando usuario {usuario.id}: {e}")
         return None
 
 
@@ -212,179 +187,88 @@ def registrar_usuario_api(message):
 # ============================================================
 
 def mostrar_menu(bot, chat_id, usuario):
-
-    # USA URL DIRECTA DE IMAGEN
-    #
-    # Tu anterior:
-    # https://postimg.cc/GHXxZb6Q
-    #
-    # NO es una URL directa de imagen.
-    #
-    # Debe ser algo parecido a:
-    # https://i.postimg.cc/xxxxxx/imagen.png
-
-    url_imagen = "https://i.postimg.cc/Cxgrn1NW/image.png"
-
-    nombre = usuario.first_name or "Usuario"
+    nombre_seguro = html.escape(usuario.first_name or "Usuario")
 
     caption = (
         "🏠 <b>MENÚ PRINCIPAL</b>\n\n"
-        f"👤 Bienvenido <b>{nombre}</b>\n\n"
+        f"👤 Bienvenido <b>{nombre_seguro}</b>\n\n"
         "✅ Membresía verificada\n\n"
         "👇 <b>Selecciona una opción:</b>"
     )
 
     try:
-
         bot.send_photo(
             chat_id,
-            photo=url_imagen,
+            photo=URL_IMAGEN_MENU,
             caption=caption,
             parse_mode="HTML",
             reply_markup=botonera_principal()
         )
-
     except ApiTelegramException as e:
-
-        # Si falla la imagen enviamos solamente texto
-        if e.error_code == 400:
-
-            try:
-
-                bot.send_message(
-                    chat_id,
-                    caption,
-                    parse_mode="HTML",
-                    reply_markup=botonera_principal()
-                )
-
-            except Exception:
-                pass
-
-        elif e.error_code == 403:
+        if e.error_code == 403:
             # Usuario bloqueó el bot
-            pass
+            return
 
-        else:
+        if e.error_code != 400:
             print(f"[TELEGRAM] Error de imagen del menú: {e.error_code} - {e.description}")
-            try:
-                bot.send_message(chat_id, caption, parse_mode="HTML",
-                                 reply_markup=botonera_principal())
-            except Exception as send_error:
-                print(f"[TELEGRAM] No se pudo enviar menú de texto: {send_error}")
+
+        try:
+            bot.send_message(
+                chat_id,
+                caption,
+                parse_mode="HTML",
+                reply_markup=botonera_principal()
+            )
+        except Exception as send_error:
+            print(f"[TELEGRAM] No se pudo enviar menú de texto: {send_error}")
 
     except Exception as e:
-
-        print(
-            f"[BOT] Error mostrando menú: {e}"
-        )
+        print(f"[BOT] Error mostrando menú: {e}")
 
 
 # ============================================================
-# COMANDO /START
+# COMANDO /START Y VERIFICACIÓN
 # ============================================================
 
 def registrar_start(bot):
 
-    # ========================================================
-    # /START
-    # ========================================================
-
-    @bot.message_handler(
-        commands=["start"],
-        chat_types=["private"]
-    )
+    @bot.message_handler(commands=["start"], chat_types=["private"])
     def start(message):
-
-        # Registrar / actualizar usuario
-        registrar_usuario_api(message)
+        registrar_usuario_api(message.from_user)
 
         user_id = message.from_user.id
 
-        # ----------------------------------------------------
-        # COMPROBAR CANAL
-        # ----------------------------------------------------
-
-        if not esta_en_canal(
-            bot,
-            user_id
-        ):
-
-            mensaje_unirse(
-                bot,
-                message.chat.id
-            )
-
+        if not esta_en_canal(bot, user_id):
+            mensaje_unirse(bot, message.chat.id)
             return
 
-        # ----------------------------------------------------
-        # USUARIO VERIFICADO
-        # ----------------------------------------------------
+        mostrar_menu(bot, message.chat.id, message.from_user)
 
-        mostrar_menu(
-            bot,
-            message.chat.id,
-            message.from_user
-        )
-
-
-    # ========================================================
-    # BOTÓN VERIFICAR
-    # ========================================================
-
-    @bot.callback_query_handler(
-        func=lambda call: call.data == "verificar_canal"
-    )
+    @bot.callback_query_handler(func=lambda call: call.data == "verificar_canal")
     def verificar_canal(call):
-
         user_id = call.from_user.id
 
-        # ----------------------------------------------------
-        # YA ESTÁ EN EL CANAL
-        # ----------------------------------------------------
-
-        if esta_en_canal(
-            bot,
-            user_id
-        ):
+        if esta_en_canal(bot, user_id):
+            registrar_usuario_api(call.from_user)
 
             try:
-
                 bot.answer_callback_query(
                     call.id,
                     "✅ Verificación completada",
                     show_alert=False
                 )
+            except Exception as e:
+                print(f"[TELEGRAM] Error respondiendo callback: {e}")
 
-            except Exception:
-                pass
-
-            # Borrar alerta anterior
             try:
-
-                bot.delete_message(
-                    call.message.chat.id,
-                    call.message.message_id
-                )
-
+                bot.delete_message(call.message.chat.id, call.message.message_id)
             except Exception:
                 pass
 
-            # Mostrar menú
-            mostrar_menu(
-                bot,
-                call.message.chat.id,
-                call.from_user
-            )
-
+            mostrar_menu(bot, call.message.chat.id, call.from_user)
             return
 
-        # ----------------------------------------------------
-        # TODAVÍA NO ESTÁ EN EL CANAL
-        # ----------------------------------------------------
-
         try:
-
             bot.answer_callback_query(
                 call.id,
                 (
@@ -393,6 +277,5 @@ def registrar_start(bot):
                 ),
                 show_alert=True
             )
-
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[TELEGRAM] Error enviando alerta de verificación: {e}")
