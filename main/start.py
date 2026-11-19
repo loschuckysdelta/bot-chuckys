@@ -15,7 +15,7 @@ BASE_URL = "https://bot-apis-zkmk.vercel.app"
 CANAL_ID = -1003958891359
 
 # Enlace de tu canal (público o de invitación privado)
-CANAL_URL = "https://t.me/loschuckys_pe"
+CANAL_URL = "https://t.me/+jVZ-ruZi-Ac1ODA5"
 
 # URL directa de imagen para el menú principal
 URL_IMAGEN_MENU = "https://i.postimg.cc/Cxgrn1NW/image.png"
